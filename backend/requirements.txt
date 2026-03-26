@@ -1,0 +1,11 @@
+openai-whisper
+fastapi
+uvicorn[standard]
+python-multipart
+slowapi
+pyjwt[crypto]
+bcrypt
+sqlalchemy
+psycopg2-binary
+python-dotenv
+httpx

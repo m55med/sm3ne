@@ -1,0 +1,42 @@
+services:
+  whisper-api:
+    build: .
+    container_name: whisper-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - whisper-cache:/root/.cache/whisper
+    depends_on:
+      bisawtak-db:
+        condition: service_healthy
+    networks:
+      - bisawtak-net
+
+  bisawtak-db:
+    image: postgres:16-alpine
+    container_name: bisawtak-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bisawtak
+      POSTGRES_USER: bisawtak
+      POSTGRES_PASSWORD: bisawtak_pass
+    volumes:
+      - bisawtak-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bisawtak"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bisawtak-net
+
+volumes:
+  whisper-cache:
+  bisawtak-pgdata:
+
+networks:
+  bisawtak-net:
+    driver: bridge

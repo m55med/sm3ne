@@ -1,4 +1,4 @@
-name: Deploy Whisper API
+name: Deploy Bisawtak API
 
 on:
   push:
@@ -15,9 +15,23 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
+          port: 22
           script: |
-            cd ${{ secrets.PROJECT_PATH }}
+            cd /root/bisawtak
+
+            # Pull latest changes
             git pull origin main
-            docker compose down
-            docker compose up -d --build
+
+            # Check if requirements changed — only then rebuild
+            if git diff HEAD~1 --name-only | grep -q "backend/requirements.txt"; then
+              echo "requirements.txt changed — rebuilding container..."
+              cd backend
+              docker compose up -d --build
+            else
+              echo "Code-only change — hot-updating files..."
+              docker cp /root/bisawtak/backend/main.py whisper-api:/app/main.py
+              docker cp /root/bisawtak/backend/app/. whisper-api:/app/app/
+              docker restart whisper-api
+            fi
+
+            echo "Deploy complete!"

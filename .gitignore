@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+dist/
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+node_modules/
+.next/
+.DS_Store
