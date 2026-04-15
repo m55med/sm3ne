@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(mkdir -p /c/Users/Admin/dev)",
+      "Read(//c/Users/Admin/**)",
+      "Bash(powershell -Command \"[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \\(Invoke-WebRequest -Uri 'https://storage.googleapis.com/flutter_infra_release/releases/releases_windows.json' -UseBasicParsing\\).Content\")",
+      "Bash(powershell -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\Admin\\\\dev\\\\install_flutter.ps1\")",
+      "Bash(/c/Users/Admin/dev/flutter/bin/flutter.bat --version)",
+      "Bash(/c/Users/Admin/dev/flutter/bin/flutter.bat doctor:*)",
+      "Bash(/c/Users/Admin/dev/flutter/bin/flutter.bat pub:*)",
+      "Bash(/c/Users/Admin/dev/flutter/bin/flutter.bat devices:*)",
+      "Bash(/c/Users/Admin/dev/flutter/bin/flutter.bat run:*)"
+    ]
+  }
+}
