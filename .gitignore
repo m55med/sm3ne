@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 .env
+.env.*
+!.env.example
 *.egg-info/
 dist/
 build/
@@ -11,3 +13,13 @@ build/
 node_modules/
 .next/
 .DS_Store
+
+# Local-only deploy / ops scripts (may contain server hostnames + credentials)
+deploy.sh
+deploy.*.sh
+*.deploy.sh
+secrets/
+*.pem
+*.key
+id_rsa*
+known_hosts

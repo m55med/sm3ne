@@ -150,6 +150,7 @@ async def list_requests(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     user_id: Optional[int] = None,
+    api_key_id: Optional[int] = None,
     language: Optional[str] = None,
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
@@ -157,17 +158,29 @@ async def list_requests(
     q = db.query(TranscriptionRequest)
     if user_id:
         q = q.filter(TranscriptionRequest.user_id == user_id)
+    if api_key_id:
+        q = q.filter(TranscriptionRequest.api_key_id == api_key_id)
     if language:
         q = q.filter(TranscriptionRequest.language == language)
 
     total = q.count()
     reqs = q.order_by(TranscriptionRequest.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
 
+    # Batch-load related users and api_keys to avoid N+1
+    user_ids = {r.user_id for r in reqs}
+    key_ids = {r.api_key_id for r in reqs if r.api_key_id}
+    users = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    keys = {k.id: k for k in db.query(ApiKey).filter(ApiKey.id.in_(key_ids)).all()} if key_ids else {}
+
     items = []
     for r in reqs:
-        user = db.query(User).filter(User.id == r.user_id).first()
+        user = users.get(r.user_id)
+        api_key = keys.get(r.api_key_id) if r.api_key_id else None
         items.append(RequestListItem(
-            id=r.id, username=user.username if user else "unknown",
+            id=r.id,
+            username=user.username if user else "unknown",
+            api_key_id=r.api_key_id,
+            api_key_name=api_key.name if api_key else None,
             filename=r.filename, duration_seconds=r.duration_seconds,
             processed_seconds=r.processed_seconds, language=r.language,
             word_count=r.word_count, was_trimmed=r.was_trimmed,

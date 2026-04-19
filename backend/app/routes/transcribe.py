@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, Request, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.auth.deps import check_daily_quota, effective_rpm_limit_str, get_user_or_api_key
-from app.core.config import ALLOWED_EXTENSIONS, limiter
+from app.auth.deps import check_daily_quota, check_rpm_limit, get_user_or_api_key
+from app.core.config import ALLOWED_EXTENSIONS, RATE_LIMIT, limiter
 from app.db.database import get_db
 from app.db.models import User, TranscriptionRequest
 from app.services import whisper_service
@@ -17,14 +17,15 @@ router = APIRouter()
 
 
 @router.post("/transcribe")
-@limiter.limit(effective_rpm_limit_str)
+@limiter.limit(RATE_LIMIT)  # baseline per-principal rate limit (bucket keyed by auth_principal)
 async def transcribe(
     request: Request,
     file: UploadFile = File(...),
     user: User = Depends(get_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    # Enforce daily quota (per-key if API key used, else per-user plan default)
+    # Enforce per-key RPM override + daily quota before doing any I/O.
+    check_rpm_limit(request, user, db)
     check_daily_quota(request, user, db)
 
     # Validate file type

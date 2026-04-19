@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,8 @@ from app.schemas.api_keys import (
     ApiKeyCreateResponse,
     ApiKeyResponse,
     ApiKeyUpdateRequest,
+    ApiKeyUsageItem,
+    ApiKeyUsageResponse,
 )
 from app.services.subscription_service import get_user_plan
 
@@ -128,6 +130,57 @@ async def delete_key(
     api_key.is_active = False
     db.commit()
     return {"message": "API key revoked"}
+
+
+@router.get("/{key_id}/usage", response_model=ApiKeyUsageResponse)
+async def key_usage(
+    key_id: int,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return the detailed request history for one API key owned by the caller."""
+    api_key = db.query(ApiKey).filter(ApiKey.id == key_id, ApiKey.user_id == user.id).first()
+    if not api_key:
+        raise HTTPException(404, "API key not found")
+
+    q = db.query(TranscriptionRequest).filter(TranscriptionRequest.api_key_id == api_key.id)
+    total = q.count()
+    rows = (
+        q.order_by(TranscriptionRequest.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    usage_today = _usage_today_map(db, user.id).get(api_key.id, 0)
+    plan = get_user_plan(db, user.id)
+    plan_daily = plan.daily_request_limit if plan and plan.daily_request_limit is not None else 100
+    daily_limit = api_key.requests_per_day if api_key.requests_per_day is not None else plan_daily
+
+    return ApiKeyUsageResponse(
+        key_id=api_key.id,
+        key_name=api_key.name,
+        usage_today=usage_today,
+        daily_limit=daily_limit,
+        items=[
+            ApiKeyUsageItem(
+                request_id=r.id,
+                filename=r.filename,
+                duration_seconds=r.duration_seconds,
+                processed_seconds=r.processed_seconds,
+                language=r.language,
+                word_count=r.word_count,
+                was_trimmed=r.was_trimmed,
+                created_at=r.created_at,
+            )
+            for r in rows
+        ],
+        total=total,
+        page=page,
+        per_page=per_page,
+    )
 
 
 @router.put("/{key_id}", response_model=ApiKeyResponse)

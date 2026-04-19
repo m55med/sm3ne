@@ -64,3 +64,25 @@ class AdminApiKeyListResponse(BaseModel):
     total: int
     page: int
     per_page: int
+
+
+class ApiKeyUsageItem(BaseModel):
+    request_id: int
+    filename: Optional[str]
+    duration_seconds: float
+    processed_seconds: float
+    language: Optional[str]
+    word_count: int
+    was_trimmed: bool
+    created_at: datetime
+
+
+class ApiKeyUsageResponse(BaseModel):
+    key_id: Optional[int]  # None when listing usage across all keys
+    key_name: Optional[str]
+    usage_today: int
+    daily_limit: int
+    items: list[ApiKeyUsageItem]
+    total: int
+    page: int
+    per_page: int

@@ -117,17 +117,46 @@ def check_daily_quota(request: Request, user: User, db: Session) -> None:
         )
 
 
-def effective_rpm_limit_str(request: Request) -> str:
-    """Callable passed to slowapi's @limiter.limit(...) — returns the per-minute
-    limit string for the current request's principal. Reads from request.state
-    which get_user_or_api_key populated.
-    """
+def _effective_rpm(request: Request) -> int | None:
+    """Resolve the per-minute limit for this request. Returns None if no override
+    is set on the api_key or plan (in which case slowapi's static RATE_LIMIT kicks in)."""
     api_key = getattr(request.state, "api_key", None)
     if api_key is not None and api_key.requests_per_minute is not None:
-        return f"{api_key.requests_per_minute}/minute"
+        return api_key.requests_per_minute
 
     plan = getattr(request.state, "plan", None)
-    if plan is not None and plan.rpm_default:
-        return f"{plan.rpm_default}/minute"
+    if plan is not None and plan.rpm_default is not None:
+        return plan.rpm_default
 
-    return RATE_LIMIT
+    return None
+
+
+def check_rpm_limit(request: Request, user: User, db: Session) -> None:
+    """Per-key RPM enforcement via a DB count over the last 60 seconds.
+    Done manually (not via slowapi's dynamic callable) because slowapi's
+    limit-value callable is invoked with no arguments, so we can't read
+    request-scoped state through it.
+    """
+    limit = _effective_rpm(request)
+    if limit is None or limit < 0:
+        return
+
+    since = datetime.now(timezone.utc) - timedelta(seconds=60)
+    api_key = getattr(request.state, "api_key", None)
+    q = db.query(func.count(TranscriptionRequest.id)).filter(
+        TranscriptionRequest.user_id == user.id,
+        TranscriptionRequest.created_at >= since,
+    )
+    if api_key is not None:
+        q = q.filter(TranscriptionRequest.api_key_id == api_key.id)
+
+    used = q.scalar() or 0
+    if used >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": "rate_limit_exceeded",
+                "limit_per_minute": limit,
+                "used_last_minute": used,
+            },
+        )

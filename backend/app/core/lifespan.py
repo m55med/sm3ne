@@ -35,22 +35,27 @@ def _run_idempotent_ddl(db):
 
 
 def _backfill_plan_limits(db):
-    """For each existing plan, set the new limit columns if still null."""
+    """Align existing plans with the intended per-tier defaults.
+
+    The ALTER TABLE DEFAULT fills new columns on existing rows with a
+    generic value (100/10/1). This function replaces those generic values
+    with the tier-specific ones (free=20/5/1, monthly=500/20/3, annual=2000/30/5).
+    We only overwrite when the current value still matches the generic default,
+    so any admin-tuned values are preserved.
+    """
+    GENERIC = {"daily_request_limit": 100, "rpm_default": 10, "api_keys_allowed": 1}
     plans = db.query(Plan).all()
     touched = False
     for plan in plans:
         defaults = PLAN_DEFAULTS.get(plan.name)
         if not defaults:
             continue
-        if plan.daily_request_limit is None:
-            plan.daily_request_limit = defaults["daily_request_limit"]
-            touched = True
-        if plan.rpm_default is None:
-            plan.rpm_default = defaults["rpm_default"]
-            touched = True
-        if plan.api_keys_allowed is None:
-            plan.api_keys_allowed = defaults["api_keys_allowed"]
-            touched = True
+        for field, intended in defaults.items():
+            current = getattr(plan, field)
+            if current is None or current == GENERIC[field]:
+                if current != intended:
+                    setattr(plan, field, intended)
+                    touched = True
     if touched:
         db.commit()
         print("Plan defaults backfilled for API-key limits.")

@@ -39,6 +39,8 @@ class UserUpdateRequest(BaseModel):
 class RequestListItem(BaseModel):
     id: int
     username: str
+    api_key_id: Optional[int] = None
+    api_key_name: Optional[str] = None
     filename: Optional[str]
     duration_seconds: float
     processed_seconds: float
