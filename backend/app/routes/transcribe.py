@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, Request, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.auth.jwt import get_current_user
-from app.core.config import RATE_LIMIT, ALLOWED_EXTENSIONS, limiter
+from app.auth.deps import check_daily_quota, effective_rpm_limit_str, get_user_or_api_key
+from app.core.config import ALLOWED_EXTENSIONS, limiter
 from app.db.database import get_db
 from app.db.models import User, TranscriptionRequest
 from app.services import whisper_service
@@ -17,20 +17,23 @@ router = APIRouter()
 
 
 @router.post("/transcribe")
-@limiter.limit(RATE_LIMIT)
+@limiter.limit(effective_rpm_limit_str)
 async def transcribe(
     request: Request,
     file: UploadFile = File(...),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_api_key),
     db: Session = Depends(get_db),
 ):
+    # Enforce daily quota (per-key if API key used, else per-user plan default)
+    check_daily_quota(request, user, db)
+
     # Validate file type
     ext = os.path.splitext(file.filename or "")[1].lower()
     if not (file.content_type and file.content_type.startswith("audio")) and ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, "Unsupported file type. Send an audio file.")
 
     # Get user plan
-    plan = get_user_plan(db, user.id)
+    plan = getattr(request.state, "plan", None) or get_user_plan(db, user.id)
     max_seconds = plan.max_audio_seconds if plan else 30
 
     # Save and optionally trim
@@ -64,9 +67,11 @@ async def transcribe(
     response_data = build_response(result)
     response_data["was_trimmed"] = was_trimmed
 
-    # Log request
+    # Log request (always — this is also the source of truth for daily quota)
+    api_key = getattr(request.state, "api_key", None)
     req_log = TranscriptionRequest(
         user_id=user.id,
+        api_key_id=api_key.id if api_key else None,
         filename=file.filename,
         duration_seconds=original_duration,
         processed_seconds=float(response_data.get("duration", 0)),

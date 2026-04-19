@@ -10,7 +10,24 @@
       "Bash(/c/Users/Admin/dev/flutter/bin/flutter.bat doctor:*)",
       "Bash(/c/Users/Admin/dev/flutter/bin/flutter.bat pub:*)",
       "Bash(/c/Users/Admin/dev/flutter/bin/flutter.bat devices:*)",
-      "Bash(/c/Users/Admin/dev/flutter/bin/flutter.bat run:*)"
+      "Bash(/c/Users/Admin/dev/flutter/bin/flutter.bat run:*)",
+      "Bash(curl -s https://voice.neojeen.com/)",
+      "Bash(curl -s -X POST https://voice.neojeen.com/auth/register -H \"Content-Type: application/json\" -d '{\"username\":\"claude_test_001\",\"password\":\"testpass123\"}')",
+      "Bash(cp \"C:\\\\Users\\\\Admin\\\\Desktop\\\\projects\\\\bsoutk\\\\WhatsApp Audio\\\\u200F 2026-03-25 at 17.23.04.opus\" /tmp/test.opus)",
+      "Read(//tmp/**)",
+      "Bash(curl -s -X POST https://voice.neojeen.com/transcribe -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzIiwidXNlcm5hbWUiOiJjbGF1ZGVfdGVzdF8wMDEiLCJyb2xlIjoidXNlciIsImV4cCI6MTc3NjY3MzE5MH0.OGdJE4ze8hPUIvJt6vNYoX20cfaY7qBOURp_DC8G6lQ' -F file=@/tmp/test.opus)",
+      "Bash(curl -s -X POST https://voice.neojeen.com/transcribe -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzIiwidXNlcm5hbWUiOiJjbGF1ZGVfdGVzdF8wMDEiLCJyb2xlIjoidXNlciIsImV4cCI6MTc3NjY3MzE5MH0.OGdJE4ze8hPUIvJt6vNYoX20cfaY7qBOURp_DC8G6lQ' -F 'file=@/tmp/test.opus;type=audio/ogg;filename=test.ogg')",
+      "Bash(cp /tmp/test.opus /tmp/test.ogg)",
+      "Bash(curl -s -X POST https://voice.neojeen.com/transcribe -H 'Authorization: Bearer __TRACKED_VAR__' -F file=@/tmp/test.ogg)",
+      "Bash(curl -s -X POST https://voice.neojeen.com/auth/login -H \"Content-Type: application/json\" -d '{\"username\":\"admin\",\"password\":\"admin123\"}')",
+      "Bash(curl -s -X POST https://voice.neojeen.com/auth/login -H \"Content-Type: application/json\" -d '{\"username\":\"admin\",\"password\":\"change-me-admin-password\"}')",
+      "Bash(curl -s -X POST https://voice.neojeen.com/transcribe -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzIiwidXNlcm5hbWUiOiJjbGF1ZGVfdGVzdF8wMDEiLCJyb2xlIjoidXNlciIsImV4cCI6MTc3NjY3MzE5MH0.OGdJE4ze8hPUIvJt6vNYoX20cfaY7qBOURp_DC8G6lQ' -F 'file=@/tmp/test.opus;type=audio/ogg;filename=voice.oga')",
+      "Bash(cp /tmp/test.opus /tmp/voice.oga)",
+      "Bash(curl -s -X POST https://voice.neojeen.com/transcribe -H 'Authorization: Bearer __TRACKED_VAR__' -F 'file=@/tmp/voice.oga;type=audio/ogg')",
+      "Bash(curl -X POST https://voice.neojeen.com/transcribe -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzIiwidXNlcm5hbWUiOiJjbGF1ZGVfdGVzdF8wMDEiLCJyb2xlIjoidXNlciIsImV4cCI6MTc3NjY3MzE5MH0.OGdJE4ze8hPUIvJt6vNYoX20cfaY7qBOURp_DC8G6lQ' -F 'file=@/tmp/voice.oga;type=audio/ogg' -v)",
+      "Read(//c/tmp/**)",
+      "Bash(curl -s -X POST https://voice.neojeen.com/transcribe -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzIiwidXNlcm5hbWUiOiJjbGF1ZGVfdGVzdF8wMDEiLCJyb2xlIjoidXNlciIsImV4cCI6MTc3NjY3MzE5MH0.OGdJE4ze8hPUIvJt6vNYoX20cfaY7qBOURp_DC8G6lQ' -F 'file=@voice.oga;type=audio/ogg')",
+      "Bash(python -m py_compile app/db/models.py app/auth/api_key.py app/auth/deps.py app/core/config.py app/core/lifespan.py app/routes/transcribe.py app/routes/api_keys.py app/routes/admin.py app/schemas/api_keys.py app/schemas/plans.py main.py)"
     ]
   }
 }

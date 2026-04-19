@@ -9,6 +9,9 @@ class PlanResponse(BaseModel):
     price: float
     original_price: float
     max_audio_seconds: int
+    daily_request_limit: int
+    rpm_default: int
+    api_keys_allowed: int
 
     class Config:
         from_attributes = True

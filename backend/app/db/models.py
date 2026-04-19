@@ -28,6 +28,7 @@ class User(Base):
 
     subscriptions = relationship("UserSubscription", back_populates="user")
     transcription_requests = relationship("TranscriptionRequest", back_populates="user")
+    api_keys = relationship("ApiKey", foreign_keys="ApiKey.user_id", back_populates="user")
 
 
 class Plan(Base):
@@ -38,6 +39,9 @@ class Plan(Base):
     price = Column(Float, default=0)
     original_price = Column(Float, default=0)
     max_audio_seconds = Column(Integer, default=30)  # -1 = unlimited
+    daily_request_limit = Column(Integer, default=100)  # -1 = unlimited
+    rpm_default = Column(Integer, default=10)
+    api_keys_allowed = Column(Integer, default=1)
     is_active = Column(Boolean, default=True)
 
     subscriptions = relationship("UserSubscription", back_populates="plan")
@@ -81,10 +85,12 @@ class TranscriptionRequest(Base):
     __tablename__ = "transcription_requests"
     __table_args__ = (
         Index("idx_requests_user_created", "user_id", "created_at"),
+        Index("idx_requests_apikey_created", "api_key_id", "created_at"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    api_key_id = Column(Integer, ForeignKey("api_keys.id"), nullable=True, index=True)
     filename = Column(String(255), nullable=True)
     duration_seconds = Column(Float, default=0)
     processed_seconds = Column(Float, default=0)
@@ -94,6 +100,28 @@ class TranscriptionRequest(Base):
     created_at = Column(DateTime, default=utcnow)
 
     user = relationship("User", back_populates="transcription_requests")
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+    __table_args__ = (
+        Index("idx_apikeys_user_active", "user_id", "is_active"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    key_prefix = Column(String(20), nullable=False, index=True)
+    key_hash = Column(String(64), nullable=False, unique=True, index=True)
+    requests_per_minute = Column(Integer, nullable=True)  # null = use plan default
+    requests_per_day = Column(Integer, nullable=True)  # null = use plan default
+    last_used_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_by_admin_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+    user = relationship("User", foreign_keys=[user_id], back_populates="api_keys")
 
 
 class PasswordReset(Base):

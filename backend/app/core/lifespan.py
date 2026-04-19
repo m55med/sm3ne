@@ -2,6 +2,7 @@ import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from sqlalchemy import text
 
 from app.core.config import executor, ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_EMAIL
 from app.auth.password import hash_password
@@ -10,18 +11,70 @@ from app.db.models import User, Plan
 from app.services import whisper_service
 
 
+PLAN_DEFAULTS = {
+    "free":    {"daily_request_limit": 20,   "rpm_default": 5,  "api_keys_allowed": 1},
+    "monthly": {"daily_request_limit": 500,  "rpm_default": 20, "api_keys_allowed": 3},
+    "annual":  {"daily_request_limit": 2000, "rpm_default": 30, "api_keys_allowed": 5},
+}
+
+
+def _run_idempotent_ddl(db):
+    """Add columns/indexes introduced after initial deployment.
+    All statements use IF NOT EXISTS so repeated startups are safe.
+    """
+    statements = [
+        "ALTER TABLE plans ADD COLUMN IF NOT EXISTS daily_request_limit INTEGER DEFAULT 100",
+        "ALTER TABLE plans ADD COLUMN IF NOT EXISTS rpm_default INTEGER DEFAULT 10",
+        "ALTER TABLE plans ADD COLUMN IF NOT EXISTS api_keys_allowed INTEGER DEFAULT 1",
+        "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS api_key_id INTEGER REFERENCES api_keys(id)",
+        "CREATE INDEX IF NOT EXISTS idx_requests_apikey_created ON transcription_requests(api_key_id, created_at)",
+    ]
+    for sql in statements:
+        db.execute(text(sql))
+    db.commit()
+
+
+def _backfill_plan_limits(db):
+    """For each existing plan, set the new limit columns if still null."""
+    plans = db.query(Plan).all()
+    touched = False
+    for plan in plans:
+        defaults = PLAN_DEFAULTS.get(plan.name)
+        if not defaults:
+            continue
+        if plan.daily_request_limit is None:
+            plan.daily_request_limit = defaults["daily_request_limit"]
+            touched = True
+        if plan.rpm_default is None:
+            plan.rpm_default = defaults["rpm_default"]
+            touched = True
+        if plan.api_keys_allowed is None:
+            plan.api_keys_allowed = defaults["api_keys_allowed"]
+            touched = True
+    if touched:
+        db.commit()
+        print("Plan defaults backfilled for API-key limits.")
+
+
 def _seed_db():
     """Seed plans and admin user on first run."""
     db = SessionLocal()
     try:
+        _run_idempotent_ddl(db)
+
         if not db.query(Plan).first():
             db.add_all([
-                Plan(name="free", price=0, original_price=0, max_audio_seconds=30),
-                Plan(name="monthly", price=27, original_price=27, max_audio_seconds=-1),
-                Plan(name="annual", price=150, original_price=325, max_audio_seconds=-1),
+                Plan(name="free",    price=0,   original_price=0,   max_audio_seconds=30,
+                     daily_request_limit=20,   rpm_default=5,  api_keys_allowed=1),
+                Plan(name="monthly", price=27,  original_price=27,  max_audio_seconds=-1,
+                     daily_request_limit=500,  rpm_default=20, api_keys_allowed=3),
+                Plan(name="annual",  price=150, original_price=325, max_audio_seconds=-1,
+                     daily_request_limit=2000, rpm_default=30, api_keys_allowed=5),
             ])
             db.commit()
             print("Plans seeded.")
+        else:
+            _backfill_plan_limits(db)
 
         if not db.query(User).filter(User.role == "admin").first():
             admin = User(

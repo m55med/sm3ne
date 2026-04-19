@@ -42,4 +42,17 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@bisawtak.com")
 
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
-limiter = Limiter(key_func=get_remote_address)
+
+
+def _rate_limit_key(request):
+    """Bucket rate limits by auth principal when available, else by IP.
+    get_user_or_api_key sets request.state.auth_principal to ("apikey", id)
+    or ("user", id) before the @limiter.limit callable runs.
+    """
+    principal = getattr(request.state, "auth_principal", None)
+    if principal:
+        return f"{principal[0]}:{principal[1]}"
+    return get_remote_address(request)
+
+
+limiter = Limiter(key_func=_rate_limit_key)

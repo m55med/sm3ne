@@ -5,6 +5,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.core.config import MODEL_NAME, limiter
 from app.core.lifespan import lifespan
+from app.routes.api_keys import router as api_keys_router
 from app.routes.auth import router as auth_router
 from app.routes.transcribe import router as transcribe_router
 from app.routes.profile import router as profile_router
@@ -31,6 +32,7 @@ app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
 app.include_router(auth_router)
 app.include_router(profile_router)
 app.include_router(plans_router)
+app.include_router(api_keys_router)
 app.include_router(transcribe_router)
 app.include_router(admin_router)
 

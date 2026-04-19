@@ -4,7 +4,12 @@ Base URL: `https://voice.neojeen.com`
 
 ## Authentication
 
-All endpoints except `/auth/*` and `/` require a Bearer token.
+All endpoints except `/auth/*` and `/` require authentication. Two schemes are supported:
+
+1. **JWT Bearer** — for mobile/web clients. `Authorization: Bearer eyJhbGc...` (from `/auth/login`, expires after 24h).
+2. **API key** — for server-to-server / bots. Either `X-API-Key: bsw_live_...` or `Authorization: Bearer bsw_live_...`. Long-lived, revocable, rate-limited per key. See the `/keys` section.
+
+A request may use either scheme; `/transcribe` accepts both. All other protected endpoints (profile, plans, keys management) are JWT-only.
 
 ### Register
 
@@ -168,9 +173,111 @@ curl -X POST https://voice.neojeen.com/transcribe \
 
 **Errors:**
 - `400` — Unsupported file type
-- `401` — Missing or invalid token
-- `429` — Rate limit exceeded (default: 10/minute per IP)
+- `401` — Missing or invalid token / API key
+- `429` — Rate limit exceeded (per-minute) **or** daily quota exceeded. For daily quota, the `detail` is an object:
+  ```json
+  {"error": "daily_quota_exceeded", "limit": 20, "used": 20, "resets_at_utc": "2026-04-20T00:00:00+00:00"}
+  ```
+  Daily quotas reset at **UTC midnight**.
 - `500` — Transcription failed
+
+---
+
+## API Keys
+
+Long-lived credentials for bots, integrations, or server-to-server use. Each key has its own rate limit + daily quota (optional; falls back to the plan's defaults).
+
+### Create Key
+```
+POST /keys
+Authorization: Bearer <jwt>
+```
+**Body:** `{ "name": "n8n-waha-bot", "expires_at": null }`
+
+**Response (201):**
+```json
+{
+  "id": 1,
+  "name": "n8n-waha-bot",
+  "key": "bsw_live_Kq9pZ7xY2aBcDeFgHiJkLm",
+  "key_prefix": "bsw_live_Kq9p",
+  "expires_at": null,
+  "created_at": "2026-04-19T12:00:00Z"
+}
+```
+⚠️ The `key` field is shown **once only**. Store it securely — it cannot be recovered.
+
+Errors:
+- `409` — Max API keys reached for your plan.
+
+### List Keys
+```
+GET /keys
+Authorization: Bearer <jwt>
+```
+Returns array (never includes the plaintext `key`):
+```json
+[
+  {
+    "id": 1,
+    "name": "n8n-waha-bot",
+    "key_prefix": "bsw_live_Kq9p",
+    "last_used_at": "2026-04-19T12:05:00Z",
+    "expires_at": null,
+    "is_active": true,
+    "created_at": "2026-04-19T12:00:00Z",
+    "requests_per_minute": null,
+    "requests_per_day": null,
+    "usage_today": 14,
+    "daily_limit": 100
+  }
+]
+```
+
+### Update Key
+```
+PUT /keys/{id}
+```
+**Body:** `{ "name": "new-name", "is_active": true, "expires_at": "2027-01-01T00:00:00Z" }` (all optional)
+
+Setting `requests_per_minute` or `requests_per_day` from the user endpoint returns `403` — those fields are admin-only.
+
+### Revoke Key
+```
+DELETE /keys/{id}
+```
+Soft-deletes (`is_active=false`). The key stops working immediately.
+
+### Use an API Key
+Either header works:
+```bash
+# Preferred
+curl -X POST https://voice.neojeen.com/transcribe \
+  -H "X-API-Key: bsw_live_Kq9pZ7xY2aBcDeFgHiJkLm" \
+  -F "file=@audio.mp3"
+
+# Also works (same result)
+curl -X POST https://voice.neojeen.com/transcribe \
+  -H "Authorization: Bearer bsw_live_Kq9pZ7xY2aBcDeFgHiJkLm" \
+  -F "file=@audio.mp3"
+```
+
+### Admin: Create Key for Any User (with custom limits)
+```
+POST /admin/keys
+Authorization: Bearer <admin-jwt>
+```
+**Body:**
+```json
+{
+  "user_id": 5,
+  "name": "whatsapp-bot-prod",
+  "requests_per_minute": 60,
+  "requests_per_day": 10000,
+  "expires_at": null
+}
+```
+Response is the same as `POST /keys`. Admins can also `GET /admin/keys`, `PUT /admin/keys/{id}`, `DELETE /admin/keys/{id}`.
 
 ---
 

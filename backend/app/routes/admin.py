@@ -5,14 +5,20 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
+from app.auth.api_key import generate_api_key
 from app.db.database import get_db
-from app.db.models import User, Plan, UserSubscription, Coupon, TranscriptionRequest
+from app.db.models import ApiKey, Coupon, Plan, TranscriptionRequest, User, UserSubscription
 from app.auth.jwt import get_current_admin
 from app.schemas.admin import (
     AdminStatsResponse, UserListResponse, UserListItem, UserUpdateRequest,
     RequestListResponse, RequestListItem,
     CouponCreate, CouponResponse, CouponUpdate,
 )
+from app.schemas.api_keys import (
+    AdminApiKeyCreateRequest, AdminApiKeyListItem, AdminApiKeyListResponse,
+    ApiKeyCreateResponse, ApiKeyResponse, ApiKeyUpdateRequest,
+)
+from app.services.subscription_service import get_user_plan
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -239,3 +245,159 @@ async def delete_coupon(
     coupon.is_active = False
     db.commit()
     return {"message": "Coupon deactivated"}
+
+
+# --- API Keys ---
+
+def _start_of_today_utc_admin() -> datetime:
+    now = datetime.now(timezone.utc)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _daily_limit_for_key(db: Session, api_key: ApiKey) -> int:
+    if api_key.requests_per_day is not None:
+        return api_key.requests_per_day
+    plan = get_user_plan(db, api_key.user_id)
+    if plan and plan.daily_request_limit is not None:
+        return plan.daily_request_limit
+    return 100
+
+
+def _usage_today_for_key(db: Session, api_key_id: int) -> int:
+    return db.query(func.count(TranscriptionRequest.id)).filter(
+        TranscriptionRequest.api_key_id == api_key_id,
+        TranscriptionRequest.created_at >= _start_of_today_utc_admin(),
+    ).scalar() or 0
+
+
+@router.get("/keys", response_model=AdminApiKeyListResponse)
+async def admin_list_keys(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    user_id: Optional[int] = None,
+    search: Optional[str] = None,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    q = db.query(ApiKey, User).join(User, User.id == ApiKey.user_id)
+    if user_id:
+        q = q.filter(ApiKey.user_id == user_id)
+    if search:
+        like = f"%{search}%"
+        q = q.filter(
+            (ApiKey.name.ilike(like)) |
+            (ApiKey.key_prefix.ilike(like)) |
+            (User.username.ilike(like))
+        )
+
+    total = q.count()
+    rows = q.order_by(ApiKey.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+
+    items = []
+    for api_key, user in rows:
+        items.append(AdminApiKeyListItem(
+            id=api_key.id,
+            name=api_key.name,
+            key_prefix=api_key.key_prefix,
+            last_used_at=api_key.last_used_at,
+            expires_at=api_key.expires_at,
+            is_active=api_key.is_active,
+            created_at=api_key.created_at,
+            requests_per_minute=api_key.requests_per_minute,
+            requests_per_day=api_key.requests_per_day,
+            usage_today=_usage_today_for_key(db, api_key.id),
+            daily_limit=_daily_limit_for_key(db, api_key),
+            user_id=api_key.user_id,
+            username=user.username,
+        ))
+
+    return AdminApiKeyListResponse(keys=items, total=total, page=page, per_page=per_page)
+
+
+@router.post("/keys", response_model=ApiKeyCreateResponse, status_code=201)
+async def admin_create_key(
+    body: AdminApiKeyCreateRequest,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    target_user = db.query(User).filter(User.id == body.user_id).first()
+    if not target_user:
+        raise HTTPException(404, "User not found")
+
+    plaintext, prefix, key_hash = generate_api_key()
+    api_key = ApiKey(
+        user_id=body.user_id,
+        name=body.name,
+        key_prefix=prefix,
+        key_hash=key_hash,
+        expires_at=body.expires_at,
+        requests_per_minute=body.requests_per_minute,
+        requests_per_day=body.requests_per_day,
+        created_by_admin_id=admin.id,
+        is_active=True,
+    )
+    db.add(api_key)
+    db.commit()
+    db.refresh(api_key)
+
+    return ApiKeyCreateResponse(
+        id=api_key.id,
+        name=api_key.name,
+        key=plaintext,
+        key_prefix=api_key.key_prefix,
+        expires_at=api_key.expires_at,
+        created_at=api_key.created_at,
+    )
+
+
+@router.put("/keys/{key_id}", response_model=ApiKeyResponse)
+async def admin_update_key(
+    key_id: int,
+    body: ApiKeyUpdateRequest,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    api_key = db.query(ApiKey).filter(ApiKey.id == key_id).first()
+    if not api_key:
+        raise HTTPException(404, "API key not found")
+
+    if body.name is not None:
+        api_key.name = body.name
+    if body.is_active is not None:
+        api_key.is_active = body.is_active
+    if body.expires_at is not None:
+        api_key.expires_at = body.expires_at
+    if body.requests_per_minute is not None:
+        api_key.requests_per_minute = body.requests_per_minute
+    if body.requests_per_day is not None:
+        api_key.requests_per_day = body.requests_per_day
+    db.commit()
+    db.refresh(api_key)
+
+    return ApiKeyResponse(
+        id=api_key.id,
+        name=api_key.name,
+        key_prefix=api_key.key_prefix,
+        last_used_at=api_key.last_used_at,
+        expires_at=api_key.expires_at,
+        is_active=api_key.is_active,
+        created_at=api_key.created_at,
+        requests_per_minute=api_key.requests_per_minute,
+        requests_per_day=api_key.requests_per_day,
+        usage_today=_usage_today_for_key(db, api_key.id),
+        daily_limit=_daily_limit_for_key(db, api_key),
+    )
+
+
+@router.delete("/keys/{key_id}")
+async def admin_delete_key(
+    key_id: int,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    api_key = db.query(ApiKey).filter(ApiKey.id == key_id).first()
+    if not api_key:
+        raise HTTPException(404, "API key not found")
+    api_key.is_active = False
+    db.commit()
+    return {"message": "API key deactivated"}
