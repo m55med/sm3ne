@@ -7,7 +7,7 @@ from sqlalchemy import func
 
 from app.auth.api_key import generate_api_key
 from app.db.database import get_db
-from app.db.models import ApiKey, Coupon, LoginEvent, Plan, TranscriptionRequest, User, UserSubscription
+from app.db.models import ApiKey, Coupon, LoginEvent, Plan, SupportTicket, TicketReply, TranscriptionRequest, User, UserSubscription
 from app.auth.jwt import get_current_admin
 from app.schemas.admin import (
     AdminStatsResponse, UserListResponse, UserListItem, UserUpdateRequest,
@@ -18,6 +18,11 @@ from app.schemas.admin import (
     AdminSubscribeRequest, SubscriptionLogItem, SubscriptionLogResponse,
     PlanSubscriberItem,
 )
+from app.schemas.support import (
+    AdminTicketSummary, AdminTicketListResponse,
+    TicketDetail, TicketReplyItem, TicketReplyCreate, TicketStatusUpdate,
+)
+from app.core.lifespan import generate_public_id
 from app.schemas.api_keys import (
     AdminApiKeyCreateRequest, AdminApiKeyListItem, AdminApiKeyListResponse,
     ApiKeyCreateResponse, ApiKeyResponse, ApiKeyUpdateRequest,
@@ -722,6 +727,158 @@ async def admin_list_subscriptions(
         ))
 
     return SubscriptionLogResponse(subscriptions=items, total=total, page=page, per_page=per_page)
+
+
+# --- Tickets ---
+
+def _reply_counts_admin(db: Session, ticket_ids: list[int]) -> dict[int, int]:
+    if not ticket_ids:
+        return {}
+    rows = db.query(TicketReply.ticket_id, func.count(TicketReply.id)).filter(
+        TicketReply.ticket_id.in_(ticket_ids)
+    ).group_by(TicketReply.ticket_id).all()
+    return {tid: count for tid, count in rows}
+
+
+@router.get("/tickets", response_model=AdminTicketListResponse)
+async def admin_list_tickets(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    ticket_type: Optional[str] = None,
+    user_id: Optional[int] = None,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    q = db.query(SupportTicket)
+    if status_filter:
+        q = q.filter(SupportTicket.status == status_filter)
+    if ticket_type:
+        q = q.filter(SupportTicket.ticket_type == ticket_type)
+    if user_id:
+        q = q.filter(SupportTicket.user_id == user_id)
+
+    total = q.count()
+    tickets = q.order_by(SupportTicket.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+
+    user_ids = {t.user_id for t in tickets}
+    users = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    counts = _reply_counts_admin(db, [t.id for t in tickets])
+
+    items = []
+    for t in tickets:
+        u = users.get(t.user_id)
+        items.append(AdminTicketSummary(
+            public_id=t.public_id,
+            user_public_id=u.public_id if u else None,
+            username=u.username if u else None,
+            ticket_type=t.ticket_type,
+            subject=t.subject,
+            status=t.status,
+            reply_count=counts.get(t.id, 0),
+            last_reply_at=t.last_reply_at,
+            created_at=t.created_at,
+        ))
+    return AdminTicketListResponse(tickets=items, total=total, page=page, per_page=per_page)
+
+
+def _load_ticket_by_public_id(db: Session, public_id: str) -> SupportTicket:
+    t = db.query(SupportTicket).filter(SupportTicket.public_id == public_id).first()
+    if not t:
+        raise HTTPException(404, "Ticket not found")
+    return t
+
+
+@router.get("/tickets/{public_id}", response_model=TicketDetail)
+async def admin_get_ticket(
+    public_id: str,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    t = _load_ticket_by_public_id(db, public_id)
+    owner = db.query(User).filter(User.id == t.user_id).first()
+    replies = db.query(TicketReply).filter(TicketReply.ticket_id == t.id).order_by(TicketReply.created_at).all()
+    uids = {r.user_id for r in replies}
+    if owner:
+        uids.add(owner.id)
+    users = {u.id: u for u in db.query(User).filter(User.id.in_(uids)).all()} if uids else {}
+
+    def _name(uid):
+        u = users.get(uid)
+        if not u:
+            return None
+        return u.full_name or u.username
+
+    reply_items = [
+        TicketReplyItem(
+            public_id=r.public_id,
+            is_admin=r.is_admin,
+            author_name=_name(r.user_id),
+            message=r.message,
+            created_at=r.created_at,
+        ) for r in replies
+    ]
+    return TicketDetail(
+        public_id=t.public_id,
+        user_public_id=owner.public_id if owner else None,
+        username=owner.username if owner else None,
+        ticket_type=t.ticket_type,
+        subject=t.subject,
+        message=t.message,
+        status=t.status,
+        replies=reply_items,
+        created_at=t.created_at,
+        updated_at=t.updated_at,
+    )
+
+
+@router.post("/tickets/{public_id}/replies", response_model=TicketReplyItem)
+async def admin_reply_ticket(
+    public_id: str,
+    body: TicketReplyCreate,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    t = _load_ticket_by_public_id(db, public_id)
+    if t.status == "closed":
+        raise HTTPException(400, "Ticket is closed")
+
+    reply = TicketReply(
+        public_id=generate_public_id(),
+        ticket_id=t.id,
+        user_id=admin.id,
+        is_admin=True,
+        message=body.message.strip(),
+    )
+    db.add(reply)
+
+    t.last_reply_at = datetime.now(timezone.utc)
+    # Admin replying transitions open → in_progress (if not already resolved/closed)
+    if t.status == "open":
+        t.status = "in_progress"
+    db.commit()
+    db.refresh(reply)
+
+    return TicketReplyItem(
+        public_id=reply.public_id,
+        is_admin=True,
+        author_name=admin.full_name or admin.username,
+        message=reply.message,
+        created_at=reply.created_at,
+    )
+
+
+@router.put("/tickets/{public_id}/status", response_model=TicketDetail)
+async def admin_update_ticket_status(
+    public_id: str,
+    body: TicketStatusUpdate,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    t = _load_ticket_by_public_id(db, public_id)
+    t.status = body.status
+    db.commit()
+    return await admin_get_ticket(public_id=public_id, admin=admin, db=db)
 
 
 # --- API Keys ---

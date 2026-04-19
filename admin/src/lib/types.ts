@@ -126,6 +126,49 @@ export interface SubscriptionLogResponse {
   per_page: number;
 }
 
+export type TicketStatus = "open" | "in_progress" | "resolved" | "closed";
+export type TicketType = "contact" | "suggestion" | "bug" | "other";
+
+export interface TicketSummary {
+  public_id: string;
+  user_public_id: string | null;
+  username: string | null;
+  ticket_type: TicketType;
+  subject: string;
+  status: TicketStatus;
+  reply_count: number;
+  last_reply_at: string | null;
+  created_at: string | null;
+}
+
+export interface TicketReplyItem {
+  public_id: string | null;
+  is_admin: boolean;
+  author_name: string | null;
+  message: string;
+  created_at: string | null;
+}
+
+export interface TicketDetail {
+  public_id: string;
+  user_public_id: string | null;
+  username: string | null;
+  ticket_type: TicketType;
+  subject: string;
+  message: string;
+  status: TicketStatus;
+  replies: TicketReplyItem[];
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AdminTicketListResponse {
+  tickets: TicketSummary[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
 export interface PlanSubscriberItem {
   user_id: number;
   user_public_id: string | null;

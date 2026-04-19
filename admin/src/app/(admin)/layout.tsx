@@ -8,6 +8,7 @@ const navItems = [
   { href: "/dashboard", label: "الإحصائيات", icon: "📊" },
   { href: "/users", label: "المستخدمين", icon: "👥" },
   { href: "/requests", label: "الطلبات", icon: "📋" },
+  { href: "/tickets", label: "الرسائل", icon: "📨" },
   { href: "/subscriptions", label: "الاشتراكات", icon: "📜" },
   { href: "/coupons", label: "الكوبونات", icon: "🎟️" },
   { href: "/plans", label: "الباقات", icon: "💎" },

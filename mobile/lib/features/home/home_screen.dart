@@ -1,7 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:bisawtak/data/repositories/transcription_repository.dart';
 import 'package:bisawtak/data/models/transcription.dart';
 
@@ -12,15 +18,126 @@ class HomeScreen extends ConsumerStatefulWidget {
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends ConsumerState<HomeScreen> {
+class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProviderStateMixin {
+  static const Duration _maxDuration = Duration(minutes: 10);
+
+  final AudioRecorder _recorder = AudioRecorder();
+  late final AnimationController _pulseController;
+
   bool _isRecording = false;
   bool _isProcessing = false;
+  String? _currentRecordingPath;
+  Duration _elapsed = Duration.zero;
+  Timer? _ticker;
+  DateTime? _recordingStartedAt;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    _pulseController.dispose();
+    _recorder.dispose();
+    super.dispose();
+  }
 
   Future<void> _toggleRecording() async {
-    // TODO: Recording will be re-added with record package fix
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('التسجيل قيد التطوير - استخدم رفع ملف حالياً')),
-    );
+    if (_isRecording) {
+      await _stopAndSend();
+    } else {
+      await _startRecording();
+    }
+  }
+
+  Future<void> _startRecording() async {
+    try {
+      final hasPermission = await _recorder.hasPermission();
+      if (!hasPermission) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('برجاء السماح بالوصول للميكروفون من إعدادات التطبيق')),
+          );
+        }
+        return;
+      }
+
+      final dir = await getTemporaryDirectory();
+      final path = p.join(dir.path, 'rec_${DateTime.now().millisecondsSinceEpoch}.m4a');
+
+      await _recorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 128000,
+          sampleRate: 44100,
+        ),
+        path: path,
+      );
+
+      _currentRecordingPath = path;
+      _recordingStartedAt = DateTime.now();
+      _elapsed = Duration.zero;
+      setState(() => _isRecording = true);
+
+      _ticker = Timer.periodic(const Duration(milliseconds: 200), (t) {
+        if (!mounted) return;
+        final now = DateTime.now();
+        final elapsed = now.difference(_recordingStartedAt ?? now);
+        setState(() => _elapsed = elapsed);
+        if (elapsed >= _maxDuration) {
+          _stopAndSend();
+        }
+      });
+
+      HapticFeedback.mediumImpact();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('فشل بدء التسجيل: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _stopAndSend() async {
+    _ticker?.cancel();
+    _ticker = null;
+    String? recordedPath;
+    try {
+      recordedPath = await _recorder.stop();
+    } catch (_) {}
+    recordedPath ??= _currentRecordingPath;
+
+    setState(() => _isRecording = false);
+    HapticFeedback.mediumImpact();
+
+    if (recordedPath == null) return;
+    // If the recording is too short, just discard it.
+    if (_elapsed.inMilliseconds < 800) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('التسجيل قصير جداً')),
+        );
+      }
+      return;
+    }
+
+    await _processFile(recordedPath, source: 'recorded', isLiveRecording: true);
+  }
+
+  Future<void> _cancelRecording() async {
+    _ticker?.cancel();
+    _ticker = null;
+    try {
+      await _recorder.stop();
+    } catch (_) {}
+    setState(() => _isRecording = false);
   }
 
   Future<void> _pickFile() async {
@@ -33,10 +150,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
-  Future<void> _processFile(String path, {String source = 'uploaded'}) async {
+  Future<void> _processFile(String path, {String source = 'uploaded', bool isLiveRecording = false}) async {
     setState(() => _isProcessing = true);
     try {
-      final transcription = await ref.read(transcriptionRepoProvider).transcribeFile(path, source: source);
+      final transcription = await ref.read(transcriptionRepoProvider).transcribeFile(
+        path,
+        source: source,
+        isLiveRecording: isLiveRecording,
+      );
       if (mounted) {
         _showResult(transcription);
       }
@@ -75,13 +196,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   Chip(label: Text(t.languageName)),
-                  const SizedBox(width: 8),
                   Chip(label: Text('${t.duration.toStringAsFixed(1)}ث')),
-                  const SizedBox(width: 8),
                   Chip(label: Text('${t.wordCount} كلمة')),
+                  if (t.source == 'recorded')
+                    Chip(
+                      avatar: const Icon(Icons.mic, size: 16, color: Colors.white),
+                      label: const Text('تسجيل', style: TextStyle(color: Colors.white)),
+                      backgroundColor: Theme.of(ctx).colorScheme.primary,
+                    ),
                 ],
               ),
               if (t.wasTrimmed)
@@ -96,7 +223,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     children: [
                       Icon(Icons.info_outline, color: Colors.orange, size: 20),
                       SizedBox(width: 8),
-                      Expanded(child: Text('تم قص الصوت إلى 30 ثانية (باقة مجانية)', style: TextStyle(color: Colors.orange))),
+                      Expanded(child: Text('تم قص الصوت (تجاوز الحد المسموح)', style: TextStyle(color: Colors.orange))),
                     ],
                   ),
                 ),
@@ -110,8 +237,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () {
-                        // Copy to clipboard
+                      onPressed: () async {
+                        await Clipboard.setData(ClipboardData(text: t.text));
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            const SnackBar(content: Text('تم نسخ النص')),
+                          );
+                        }
                       },
                       icon: const Icon(Icons.copy),
                       label: const Text('نسخ'),
@@ -120,9 +252,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () {
-                        // Share
-                      },
+                      onPressed: () => Share.share(t.text),
                       icon: const Icon(Icons.share),
                       label: const Text('مشاركة'),
                     ),
@@ -138,6 +268,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
         title: const Text('بصوتك'),
@@ -164,38 +295,80 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  GestureDetector(
-                    onTap: _toggleRecording,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 300),
-                      width: _isRecording ? 140 : 120,
-                      height: _isRecording ? 140 : 120,
-                      decoration: BoxDecoration(
-                        color: _isRecording ? Colors.red : Theme.of(context).colorScheme.primary,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: (_isRecording ? Colors.red : Theme.of(context).colorScheme.primary).withValues(alpha: 0.3),
-                            blurRadius: _isRecording ? 30 : 20,
-                            spreadRadius: _isRecording ? 10 : 5,
+                  AnimatedBuilder(
+                    animation: _pulseController,
+                    builder: (context, child) {
+                      final glow = _isRecording ? (0.35 + 0.35 * _pulseController.value) : 0.25;
+                      return GestureDetector(
+                        onTap: _toggleRecording,
+                        onLongPress: _isRecording ? _cancelRecording : null,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 250),
+                          width: _isRecording ? 160 : 130,
+                          height: _isRecording ? 160 : 130,
+                          decoration: BoxDecoration(
+                            color: _isRecording ? Colors.red : cs.primary,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: (_isRecording ? Colors.red : cs.primary).withValues(alpha: glow),
+                                blurRadius: _isRecording ? 40 : 20,
+                                spreadRadius: _isRecording ? (10 + 6 * _pulseController.value) : 5,
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
-                      child: Icon(
-                        _isRecording ? Icons.stop : Icons.mic,
-                        size: 56,
-                        color: Colors.white,
+                          child: Icon(
+                            _isRecording ? Icons.stop : Icons.mic,
+                            size: 64,
+                            color: Colors.white,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 20),
+                  if (_isRecording) ...[
+                    Text(
+                      _fmt(_elapsed),
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                    ),
+                    const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: LinearProgressIndicator(
+                        value: (_elapsed.inMilliseconds / _maxDuration.inMilliseconds).clamp(0, 1),
+                        backgroundColor: Colors.red.shade100,
+                        valueColor: const AlwaysStoppedAnimation(Colors.red),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    _isRecording ? 'اضغط للإيقاف' : 'اضغط للتسجيل',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'اضغط للإيقاف والتحويل · أقصى 10 دقائق',
+                      style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'استمرار بالضغط للإلغاء',
+                      style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
+                    ),
+                  ] else ...[
+                    Text(
+                      'اضغط للتسجيل',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'التسجيل مجاني ولا يُخصم من باقتك',
+                      style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                    ),
+                  ],
                   const SizedBox(height: 48),
                   OutlinedButton.icon(
-                    onPressed: _pickFile,
+                    onPressed: _isRecording ? null : _pickFile,
                     icon: const Icon(Icons.upload_file),
                     label: const Text('رفع ملف صوتي'),
                     style: OutlinedButton.styleFrom(
@@ -207,5 +380,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
             ),
     );
+  }
+
+  String _fmt(Duration d) {
+    final m = d.inMinutes.toString().padLeft(2, '0');
+    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 }

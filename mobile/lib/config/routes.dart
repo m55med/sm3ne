@@ -15,6 +15,11 @@ import 'package:bisawtak/features/transcription/transcription_result_screen.dart
 import 'package:bisawtak/features/plans/plans_screen.dart';
 import 'package:bisawtak/features/profile/profile_screen.dart';
 import 'package:bisawtak/features/profile/settings_screen.dart';
+import 'package:bisawtak/features/profile/edit_profile_screen.dart';
+import 'package:bisawtak/features/profile/help_screen.dart';
+import 'package:bisawtak/features/profile/about_screen.dart';
+import 'package:bisawtak/features/support/contact_screen.dart';
+import 'package:bisawtak/features/support/ticket_detail_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
@@ -59,6 +64,14 @@ final routerProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(path: '/settings', builder: (_, __) => const SettingsScreen()),
+      GoRoute(path: '/profile/edit', builder: (_, __) => const EditProfileScreen()),
+      GoRoute(path: '/help', builder: (_, __) => const HelpScreen()),
+      GoRoute(path: '/about', builder: (_, __) => const AboutScreen()),
+      GoRoute(path: '/contact', builder: (_, __) => const ContactScreen()),
+      GoRoute(
+        path: '/contact/:id',
+        builder: (_, state) => TicketDetailScreen(publicId: state.pathParameters['id']!),
+      ),
     ],
   );
 });

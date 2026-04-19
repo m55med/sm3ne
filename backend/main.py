@@ -10,6 +10,7 @@ from app.routes.auth import router as auth_router
 from app.routes.transcribe import router as transcribe_router
 from app.routes.profile import router as profile_router
 from app.routes.plans import router as plans_router
+from app.routes.support import router as support_router
 from app.routes.admin import router as admin_router
 from app.services import whisper_service
 
@@ -39,6 +40,7 @@ app.include_router(profile_router, prefix=API_PREFIX)
 app.include_router(plans_router, prefix=API_PREFIX)
 app.include_router(api_keys_router, prefix=API_PREFIX)
 app.include_router(transcribe_router, prefix=API_PREFIX)
+app.include_router(support_router, prefix=API_PREFIX)
 app.include_router(admin_router, prefix=API_PREFIX)
 
 

@@ -103,6 +103,8 @@ class TranscriptionRequest(Base):
     was_trimmed = Column(Boolean, default=False)
     status = Column(String(20), default="completed", index=True)  # processing | completed | failed
     error_message = Column(String(500), nullable=True)
+    source = Column(String(20), default="upload", index=True)  # upload | recording | share | api
+    is_live_recording = Column(Boolean, default=False)
     # Point-in-time snapshot of the user's plan at the moment this request was created.
     # Never updated afterwards — gives the admin dashboard truthful history even after
     # the user upgrades/downgrades.
@@ -146,6 +148,40 @@ class PasswordReset(Base):
     otp = Column(String(6), nullable=False)
     expires_at = Column(DateTime, nullable=False)
     used = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class SupportTicket(Base):
+    __tablename__ = "support_tickets"
+    __table_args__ = (
+        Index("idx_tickets_user_created", "user_id", "created_at"),
+        Index("idx_tickets_status_created", "status", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    public_id = Column(String(12), unique=True, nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    ticket_type = Column(String(20), nullable=False, default="contact")  # contact | suggestion | bug | other
+    subject = Column(String(200), nullable=False)
+    message = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False, default="open", index=True)  # open | in_progress | resolved | closed
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    last_reply_at = Column(DateTime, nullable=True)
+
+
+class TicketReply(Base):
+    __tablename__ = "ticket_replies"
+    __table_args__ = (
+        Index("idx_ticket_replies_ticket_created", "ticket_id", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    public_id = Column(String(12), unique=True, nullable=True, index=True)
+    ticket_id = Column(Integer, ForeignKey("support_tickets.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    is_admin = Column(Boolean, default=False)
+    message = Column(Text, nullable=False)
     created_at = Column(DateTime, default=utcnow)
 
 

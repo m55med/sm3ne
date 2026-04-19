@@ -1,6 +1,6 @@
 import os
 
-from fastapi import APIRouter, Depends, Request, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, Form, Request, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -20,17 +20,24 @@ from app.services.subscription_service import get_active_subscription, get_user_
 router = APIRouter()
 
 
+LIVE_RECORDING_MAX_SECONDS = 600  # 10 minutes — fixed cap, applies to all plans
+
+
 @router.post("/transcribe")
 @limiter.limit(RATE_LIMIT)  # baseline per-principal rate limit (bucket keyed by auth_principal)
 async def transcribe(
     request: Request,
     file: UploadFile = File(...),
+    source: str = Form("upload"),
+    is_live_recording: bool = Form(False),
     user: User = Depends(get_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    # Enforce per-key RPM override + daily quota before doing any I/O.
+    # Live recordings bypass the daily quota by design — they're self-captured
+    # on the device and naturally rate-limited by the user. RPM still applies.
     check_rpm_limit(request, user, db)
-    check_daily_quota(request, user, db)
+    if not is_live_recording:
+        check_daily_quota(request, user, db)
 
     # Validate file type
     ext = os.path.splitext(file.filename or "")[1].lower()
@@ -39,7 +46,12 @@ async def transcribe(
 
     # Get user plan
     plan = getattr(request.state, "plan", None) or get_user_plan(db, user.id)
-    max_seconds = plan.max_audio_seconds if plan else 30
+    # Live recordings get a fixed 10-min cap regardless of plan;
+    # regular uploads honor the plan's max_audio_seconds (-1 = unlimited).
+    if is_live_recording:
+        max_seconds = LIVE_RECORDING_MAX_SECONDS
+    else:
+        max_seconds = plan.max_audio_seconds if plan else 30
 
     # Save and optionally trim
     import tempfile
@@ -71,6 +83,12 @@ async def transcribe(
         TranscriptionRequest.status != "failed",
     ).scalar() or 0
 
+    resolved_source = source
+    if is_live_recording:
+        resolved_source = "recording"
+    elif api_key is not None and source == "upload":
+        resolved_source = "api"
+
     req_log = TranscriptionRequest(
         user_id=user.id,
         api_key_id=api_key.id if api_key else None,
@@ -78,6 +96,8 @@ async def transcribe(
         duration_seconds=original_duration,
         was_trimmed=False,
         status="processing",
+        source=resolved_source,
+        is_live_recording=is_live_recording,
         plan_name_at_request=plan.name if plan else "free",
         plan_source_at_request=plan_source,
         daily_limit_at_request=plan.daily_request_limit if plan else None,

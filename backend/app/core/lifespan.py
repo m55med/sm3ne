@@ -47,6 +47,9 @@ def _run_idempotent_ddl(db):
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS monthly_limit_at_request INTEGER",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS daily_used_at_request INTEGER",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS api_key_id INTEGER REFERENCES api_keys(id)",
+        "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'upload'",
+        "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS is_live_recording BOOLEAN DEFAULT FALSE",
+        "CREATE INDEX IF NOT EXISTS idx_requests_source ON transcription_requests(source)",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'completed'",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS error_message VARCHAR(500)",
         "CREATE INDEX IF NOT EXISTS idx_requests_apikey_created ON transcription_requests(api_key_id, created_at)",
@@ -71,6 +74,30 @@ def _run_idempotent_ddl(db):
         "CREATE INDEX IF NOT EXISTS idx_login_events_success ON login_events(success)",
         "CREATE INDEX IF NOT EXISTS idx_login_events_ip ON login_events(ip_address)",
         "CREATE INDEX IF NOT EXISTS idx_login_events_created ON login_events(created_at)",
+        """CREATE TABLE IF NOT EXISTS support_tickets (
+            id SERIAL PRIMARY KEY,
+            public_id VARCHAR(12) UNIQUE,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            ticket_type VARCHAR(20) NOT NULL DEFAULT 'contact',
+            subject VARCHAR(200) NOT NULL,
+            message TEXT NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'open',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_reply_at TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_tickets_user_created ON support_tickets(user_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_tickets_status_created ON support_tickets(status, created_at)",
+        """CREATE TABLE IF NOT EXISTS ticket_replies (
+            id SERIAL PRIMARY KEY,
+            public_id VARCHAR(12) UNIQUE,
+            ticket_id INTEGER NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            is_admin BOOLEAN DEFAULT FALSE,
+            message TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_ticket_replies_ticket_created ON ticket_replies(ticket_id, created_at)",
     ]
     for sql in statements:
         db.execute(text(sql))

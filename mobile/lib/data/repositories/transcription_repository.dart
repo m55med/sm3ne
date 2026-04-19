@@ -14,9 +14,17 @@ class TranscriptionRepository {
 
   TranscriptionRepository(this._api);
 
-  Future<Transcription> transcribeFile(String filePath, {String source = 'uploaded', String? sourceApp}) async {
+  Future<Transcription> transcribeFile(
+    String filePath, {
+    String source = 'uploaded',
+    String? sourceApp,
+    bool isLiveRecording = false,
+  }) async {
+    final backendSource = isLiveRecording ? 'recording' : 'upload';
     final formData = FormData.fromMap({
       'file': await MultipartFile.fromFile(filePath),
+      'source': backendSource,
+      'is_live_recording': isLiveRecording.toString(),
     });
 
     final resp = await _api.dio.post('/transcribe', data: formData);
