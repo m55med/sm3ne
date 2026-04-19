@@ -15,13 +15,16 @@ from app.services import whisper_service
 
 app = FastAPI(title="Bisawtak - Speech-to-Text API", version="2.0.0", lifespan=lifespan)
 
-# CORS
+# CORS. allow_origins=["*"] with allow_credentials=True is rejected by browsers;
+# since admin auth uses Authorization: Bearer (localStorage), cookies/credentials
+# aren't needed, so we turn credentials off and keep the wildcard.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 app.state.limiter = limiter
@@ -29,15 +32,18 @@ app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
     status_code=429, content={"detail": "Rate limit exceeded. Try again later."}
 ))
 
-app.include_router(auth_router)
-app.include_router(profile_router)
-app.include_router(plans_router)
-app.include_router(api_keys_router)
-app.include_router(transcribe_router)
-app.include_router(admin_router)
+API_PREFIX = "/api/v1"
+
+app.include_router(auth_router, prefix=API_PREFIX)
+app.include_router(profile_router, prefix=API_PREFIX)
+app.include_router(plans_router, prefix=API_PREFIX)
+app.include_router(api_keys_router, prefix=API_PREFIX)
+app.include_router(transcribe_router, prefix=API_PREFIX)
+app.include_router(admin_router, prefix=API_PREFIX)
 
 
-@app.get("/")
+@app.get(f"{API_PREFIX}/health")
+@app.get("/health")
 async def health():
     if whisper_service.is_loading():
         return {"status": "loading", "model": MODEL_NAME}

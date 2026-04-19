@@ -1,3 +1,4 @@
+import calendar
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request, status
@@ -79,15 +80,57 @@ def get_user_or_api_key(request: Request, db: Session = Depends(get_db)) -> User
     return user
 
 
-def _effective_daily_limit(request: Request, db: Session, user_id: int) -> int:
-    api_key = getattr(request.state, "api_key", None)
-    if api_key is not None and api_key.requests_per_day is not None:
-        return api_key.requests_per_day
+def _start_of_current_month_utc() -> datetime:
+    now = datetime.now(timezone.utc)
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
+
+def _days_remaining_in_month() -> int:
+    now = datetime.now(timezone.utc)
+    _, last_day = calendar.monthrange(now.year, now.month)
+    return last_day - now.day + 1  # includes today
+
+
+def _smart_daily_from_monthly(monthly_limit: int, used_this_month: int) -> int:
+    """Distribute remaining monthly quota across remaining days (incl. today).
+    monthly_limit < 0 means unlimited; callers should short-circuit before calling."""
+    remaining_monthly = max(monthly_limit - used_this_month, 0)
+    days_left = max(_days_remaining_in_month(), 1)
+    return max(remaining_monthly // days_left, 0)
+
+
+def _effective_daily_limit(request: Request, db: Session, user_id: int) -> int:
+    """Resolve today's effective cap. Returns -1 for unlimited."""
+    api_key = getattr(request.state, "api_key", None)
     plan = getattr(request.state, "plan", None) or get_user_plan(db, user_id)
-    if plan and plan.daily_request_limit is not None:
-        return plan.daily_request_limit
-    return 100
+
+    # API-key path: plan-level API limit takes precedence over per-key override
+    if api_key is not None:
+        if plan is not None and plan.api_daily_request_limit is not None:
+            api_cap = plan.api_daily_request_limit
+            if api_cap == 0:
+                return 0  # API disabled on this plan
+            if api_cap > 0:
+                return api_cap
+            # api_cap == -1 → fall through to daily_request_limit / monthly logic
+        if api_key.requests_per_day is not None:
+            return api_key.requests_per_day
+
+    static_daily = plan.daily_request_limit if plan and plan.daily_request_limit is not None else 100
+
+    # Monthly smart distribution (applies to both app users and API-key users when api_cap == -1)
+    if plan and plan.monthly_request_limit is not None and plan.monthly_request_limit >= 0:
+        used_this_month = db.query(func.count(TranscriptionRequest.id)).filter(
+            TranscriptionRequest.user_id == user_id,
+            TranscriptionRequest.created_at >= _start_of_current_month_utc(),
+            TranscriptionRequest.status != "failed",
+        ).scalar() or 0
+        smart_daily = _smart_daily_from_monthly(plan.monthly_request_limit, used_this_month)
+        if static_daily < 0:
+            return smart_daily
+        return min(static_daily, smart_daily)
+
+    return static_daily
 
 
 def check_daily_quota(request: Request, user: User, db: Session) -> None:
@@ -96,9 +139,16 @@ def check_daily_quota(request: Request, user: User, db: Session) -> None:
         return  # unlimited
 
     api_key = getattr(request.state, "api_key", None)
+    if limit == 0 and api_key is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "api_disabled_on_plan", "message": "API access is not allowed on your current plan."},
+        )
+
     q = db.query(func.count(TranscriptionRequest.id)).filter(
         TranscriptionRequest.user_id == user.id,
         TranscriptionRequest.created_at >= _start_of_today_utc(),
+        TranscriptionRequest.status != "failed",
     )
     if api_key is not None:
         q = q.filter(TranscriptionRequest.api_key_id == api_key.id)

@@ -1,7 +1,7 @@
 class AppConstants {
   static const String appName = 'بصوتك';
   static const String appNameEn = 'Bisawtak';
-  static const String apiBaseUrl = 'https://voice.neojeen.com';
+  static const String apiBaseUrl = 'https://voice.neojeen.com/api/v1';
   static const int freeMaxSeconds = 30;
 
   // AdMob IDs (replace with real ones)

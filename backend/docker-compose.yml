@@ -14,6 +14,19 @@ services:
         condition: service_healthy
     networks:
       - bisawtak-net
+      - proxy-network
+
+  bisawtak-admin:
+    build: ../admin
+    container_name: bisawtak-admin
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      # Blank = use same-origin /api/v1, which is what we want when served
+      # through nginx-proxy-manager on voice.neojeen.com.
+      - NEXT_PUBLIC_API_URL=/api/v1
+    networks:
+      - proxy-network
 
   bisawtak-db:
     image: postgres:16-alpine
@@ -40,3 +53,5 @@ volumes:
 networks:
   bisawtak-net:
     driver: bridge
+  proxy-network:
+    external: true

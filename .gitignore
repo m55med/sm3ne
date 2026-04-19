@@ -6,12 +6,33 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# Flutter
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
 .packages
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/ios/Flutter/Flutter.framework
+mobile/ios/Flutter/Flutter.podspec
+mobile/ios/Runner.xcodeproj/project.xcworkspace/xcuserdata/
+mobile/ios/Runner.xcodeproj/xcuserdata/
+mobile/ios/Runner.xcworkspace/xcuserdata/
+mobile/macos/Pods/
+mobile/pubspec.lock
+
+# Node / Next.js
 node_modules/
 .next/
+.turbo/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
 .DS_Store
 
 # Local-only deploy / ops scripts (may contain server hostnames + credentials)
@@ -21,5 +42,7 @@ deploy.*.sh
 secrets/
 *.pem
 *.key
+*.p8
+AuthKey_*
 id_rsa*
 known_hosts

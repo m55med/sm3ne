@@ -1,5 +1,5 @@
 import httpx
-from app.core.config import GOOGLE_CLIENT_ID
+from app.core.config import GOOGLE_CLIENT_ID, APPLE_CLIENT_ID
 
 
 async def verify_google_token(token: str) -> dict | None:
@@ -45,7 +45,7 @@ async def verify_apple_token(token: str) -> dict | None:
         public_key = pyjwt.algorithms.RSAAlgorithm.from_jwk(key_data)
         payload = pyjwt.decode(
             token, public_key, algorithms=["RS256"],
-            audience="com.bisawtak.app", issuer="https://appleid.apple.com"
+            audience=APPLE_CLIENT_ID, issuer="https://appleid.apple.com"
         )
 
         return {

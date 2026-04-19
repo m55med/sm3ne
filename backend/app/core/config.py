@@ -35,6 +35,7 @@ SMTP_FROM = os.getenv("SMTP_FROM", "noreply@bisawtak.com")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 APPLE_TEAM_ID = os.getenv("APPLE_TEAM_ID", "")
 APPLE_KEY_ID = os.getenv("APPLE_KEY_ID", "")
+APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID", "com.bisawtak.bisawtak")
 
 # Admin
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
