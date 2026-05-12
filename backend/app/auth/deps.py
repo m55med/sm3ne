@@ -1,5 +1,5 @@
-import calendar
-from datetime import datetime, timedelta, timezone
+import logging
+from datetime import timedelta
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import func
@@ -7,19 +7,27 @@ from sqlalchemy.orm import Session
 
 from app.auth.api_key import extract_api_key_from_request, hash_api_key
 from app.auth.jwt import get_current_user
-from app.core.config import RATE_LIMIT
+from app.core.time_utils import (
+    days_remaining_in_month,
+    start_of_current_month_utc,
+    start_of_today_utc,
+    utc_now,
+)
 from app.db.database import get_db
 from app.db.models import ApiKey, TranscriptionRequest, User
 from app.services.subscription_service import get_user_plan
 
+logger = logging.getLogger(__name__)
+
+# Minimum daily quota we hand back to users even when the smart-distribution
+# math would otherwise floor to zero (e.g. monthly already exhausted with days
+# still left). Stops users from being completely locked out mid-month. Only
+# applies when monthly_limit >= 0 (finite); unlimited plans short-circuit.
+SMART_DAILY_FLOOR = 10
+
 
 def _set_principal(request: Request, kind: str, ident: int) -> None:
     request.state.auth_principal = (kind, ident)
-
-
-def _start_of_today_utc() -> datetime:
-    now = datetime.now(timezone.utc)
-    return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def get_api_key_user(request: Request, db: Session = Depends(get_db)) -> User:
@@ -38,8 +46,9 @@ def get_api_key_user(request: Request, db: Session = Depends(get_db)) -> User:
     if api_key.expires_at:
         expires = api_key.expires_at
         if expires.tzinfo is None:
+            from datetime import timezone
             expires = expires.replace(tzinfo=timezone.utc)
-        if expires < datetime.now(timezone.utc):
+        if expires < utc_now():
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key expired")
 
     user = db.query(User).filter(User.id == api_key.user_id).first()
@@ -51,11 +60,19 @@ def get_api_key_user(request: Request, db: Session = Depends(get_db)) -> User:
     request.state.user = user
     request.state.plan = get_user_plan(db, user.id)
 
+    # Best-effort last_used_at update. A failure here MUST NOT break the
+    # request: we use a nested transaction so a write race / unique-constraint
+    # hiccup is contained, and we log rather than swallow silently.
     try:
-        api_key.last_used_at = datetime.now(timezone.utc)
+        with db.begin_nested():
+            api_key.last_used_at = utc_now()
         db.commit()
-    except Exception:
-        db.rollback()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to update api_key.last_used_at: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
     return user
 
@@ -80,23 +97,18 @@ def get_user_or_api_key(request: Request, db: Session = Depends(get_db)) -> User
     return user
 
 
-def _start_of_current_month_utc() -> datetime:
-    now = datetime.now(timezone.utc)
-    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
-
-def _days_remaining_in_month() -> int:
-    now = datetime.now(timezone.utc)
-    _, last_day = calendar.monthrange(now.year, now.month)
-    return last_day - now.day + 1  # includes today
-
-
 def _smart_daily_from_monthly(monthly_limit: int, used_this_month: int) -> int:
     """Distribute remaining monthly quota across remaining days (incl. today).
-    monthly_limit < 0 means unlimited; callers should short-circuit before calling."""
+
+    monthly_limit < 0 means unlimited; callers should short-circuit before
+    calling. We apply a floor of SMART_DAILY_FLOOR so users aren't completely
+    locked out mid-month if monthly got drained but daily was unused — a softer
+    landing than returning 0. Floor only applies when monthly is finite.
+    """
     remaining_monthly = max(monthly_limit - used_this_month, 0)
-    days_left = max(_days_remaining_in_month(), 1)
-    return max(remaining_monthly // days_left, 0)
+    days_left = max(days_remaining_in_month(), 1)
+    base = max(remaining_monthly // days_left, 0)
+    return max(base, SMART_DAILY_FLOOR)
 
 
 def _effective_daily_limit(request: Request, db: Session, user_id: int) -> int:
@@ -122,7 +134,7 @@ def _effective_daily_limit(request: Request, db: Session, user_id: int) -> int:
     if plan and plan.monthly_request_limit is not None and plan.monthly_request_limit >= 0:
         used_this_month = db.query(func.count(TranscriptionRequest.id)).filter(
             TranscriptionRequest.user_id == user_id,
-            TranscriptionRequest.created_at >= _start_of_current_month_utc(),
+            TranscriptionRequest.created_at >= start_of_current_month_utc(),
             TranscriptionRequest.status != "failed",
         ).scalar() or 0
         smart_daily = _smart_daily_from_monthly(plan.monthly_request_limit, used_this_month)
@@ -147,15 +159,22 @@ def check_daily_quota(request: Request, user: User, db: Session) -> None:
 
     q = db.query(func.count(TranscriptionRequest.id)).filter(
         TranscriptionRequest.user_id == user.id,
-        TranscriptionRequest.created_at >= _start_of_today_utc(),
+        TranscriptionRequest.created_at >= start_of_today_utc(),
         TranscriptionRequest.status != "failed",
     )
+    # SECURITY/QUOTA NOTE (F14):
+    # When the caller is using an API key we deliberately count usage across
+    # ALL of the user's API keys (filtered by api_key_id IS NOT NULL), not
+    # just the current key. Filtering by api_key_id == current would let a
+    # user with N keys do `daily_limit * N` requests/day — the plan-level
+    # limit is meant to be a *user* limit, not a per-key limit. Per-key
+    # sub-budgets are still enforced separately by api_key.requests_per_day.
     if api_key is not None:
-        q = q.filter(TranscriptionRequest.api_key_id == api_key.id)
+        q = q.filter(TranscriptionRequest.api_key_id.isnot(None))
 
     used = q.scalar() or 0
     if used >= limit:
-        resets_at = _start_of_today_utc() + timedelta(days=1)
+        resets_at = start_of_today_utc() + timedelta(days=1)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail={
@@ -191,7 +210,7 @@ def check_rpm_limit(request: Request, user: User, db: Session) -> None:
     if limit is None or limit < 0:
         return
 
-    since = datetime.now(timezone.utc) - timedelta(seconds=60)
+    since = utc_now() - timedelta(seconds=60)
     api_key = getattr(request.state, "api_key", None)
     q = db.query(func.count(TranscriptionRequest.id)).filter(
         TranscriptionRequest.user_id == user.id,

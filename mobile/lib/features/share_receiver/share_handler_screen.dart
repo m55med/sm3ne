@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bisawtak/data/repositories/transcription_repository.dart';
 import 'package:bisawtak/data/models/transcription.dart';
-import 'package:flutter/services.dart';
+import 'package:bisawtak/shared/utils/error_messages.dart';
+import 'package:bisawtak/shared/utils/file_validation.dart';
+import 'package:bisawtak/shared/utils/sandbox_paths.dart';
 
 class ShareHandlerScreen extends ConsumerStatefulWidget {
   final String filePath;
@@ -28,20 +31,49 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
 
   Future<void> _process() async {
     try {
+      // Defense-in-depth: even though routes.dart hardens the deep-link path,
+      // re-validate that the shared file lives inside the app sandbox and that
+      // it's a supported audio format/size before sending it to the server.
+      final insideSandbox = await isPathInsideSandbox(widget.filePath);
+      if (!insideSandbox) {
+        throw const TranscriptionUploadException(
+          'لا يمكن قراءة الملف من هذا المسار.',
+          code: 'outside_sandbox',
+        );
+      }
+      validateAudioFileForUpload(widget.filePath);
+
       final result = await ref.read(transcriptionRepoProvider).transcribeFile(
         widget.filePath,
         source: 'shared',
         sourceApp: widget.sourceApp,
       );
+      if (!mounted) return;
       setState(() {
         _result = result;
         _processing = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _error = e.toString();
+        _error = friendlyErrorMessage(e);
         _processing = false;
       });
+    }
+  }
+
+  Future<void> _copy() async {
+    try {
+      await Clipboard.setData(ClipboardData(text: _result!.text));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم نسخ النص!')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 
@@ -73,7 +105,7 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
                           const SizedBox(height: 16),
                           Text('فشل التحويل', style: Theme.of(context).textTheme.titleLarge),
                           const SizedBox(height: 8),
-                          Text(_error!, style: const TextStyle(color: Colors.grey)),
+                          Text(_error!, style: const TextStyle(color: Colors.grey), textAlign: TextAlign.center),
                           const SizedBox(height: 24),
                           ElevatedButton(onPressed: () => widget.onDone?.call(), child: const Text('إغلاق')),
                         ],
@@ -119,10 +151,7 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
                           children: [
                             Expanded(
                               child: ElevatedButton.icon(
-                                onPressed: () {
-                                  Clipboard.setData(ClipboardData(text: _result!.text));
-                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم نسخ النص!')));
-                                },
+                                onPressed: _copy,
                                 icon: const Icon(Icons.copy),
                                 label: const Text('نسخ'),
                               ),

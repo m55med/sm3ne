@@ -1,9 +1,9 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:bisawtak/core/api/api_client.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
+import 'package:bisawtak/shared/utils/error_messages.dart';
 
 class EditProfileScreen extends ConsumerStatefulWidget {
   const EditProfileScreen({super.key});
@@ -36,6 +36,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() {
       _saving = true;
@@ -48,16 +49,13 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         'email': _emailCtrl.text.trim().isEmpty ? null : _emailCtrl.text.trim(),
       });
       await ref.read(authProvider.notifier).checkAuth();
+      if (!mounted) return;
       setState(() => _success = 'تم حفظ التعديلات');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم حفظ التعديلات'), behavior: SnackBarBehavior.floating),
-        );
-      }
-    } on DioException catch (e) {
-      setState(() => _error = e.response?.data?['detail']?.toString() ?? 'تعذر الحفظ');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم حفظ التعديلات'), behavior: SnackBarBehavior.floating),
+      );
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = friendlyErrorMessage(e));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -85,7 +83,11 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                   radius: 44,
                   backgroundColor: Theme.of(context).colorScheme.primaryContainer,
                   child: Text(
-                    (user?.fullName ?? user?.username ?? '?')[0].toUpperCase(),
+                    (user?.fullName ?? user?.username ?? '?')
+                            .characters
+                            .firstOrNull
+                            ?.toUpperCase() ??
+                        '?',
                     style: TextStyle(fontSize: 34, color: Theme.of(context).colorScheme.primary),
                   ),
                 ),

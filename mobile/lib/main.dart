@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'package:bisawtak/config/l10n/app_localizations.dart';
 import 'package:bisawtak/config/theme.dart';
 import 'package:bisawtak/config/routes.dart';
-import 'package:bisawtak/core/auth/auth_provider.dart';
 import 'package:bisawtak/features/share_receiver/share_handler_screen.dart';
+import 'package:bisawtak/shared/utils/sandbox_paths.dart';
 
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 final localeProvider = StateProvider<Locale?>((ref) => null);
@@ -53,14 +53,14 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
     // Handle shared files when app is already running
     ReceiveSharingIntent.instance.getMediaStream().listen((files) {
       if (files.isNotEmpty && files.first.path.isNotEmpty) {
-        ref.read(sharedFileProvider.notifier).state = files.first.path;
+        _acceptSharedPath(files.first.path);
       }
     });
 
     // Handle shared files when app is opened via share
     ReceiveSharingIntent.instance.getInitialMedia().then((files) {
       if (files.isNotEmpty && files.first.path.isNotEmpty) {
-        ref.read(sharedFileProvider.notifier).state = files.first.path;
+        _acceptSharedPath(files.first.path);
       }
     });
 
@@ -69,9 +69,22 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
     channel.setMethodCallHandler((call) async {
       if (call.method == 'sharedFile') {
         final path = call.arguments as String;
-        ref.read(sharedFileProvider.notifier).state = path;
+        _acceptSharedPath(path);
       }
     });
+  }
+
+  /// Validates an incoming shared-file path against the app sandbox + allowed
+  /// extensions before pushing it into [sharedFileProvider]. Untrusted paths
+  /// — anything containing `..` or pointing outside the sandbox — are dropped
+  /// silently to defuse path-traversal vectors.
+  Future<void> _acceptSharedPath(String path) async {
+    if (path.isEmpty || path.contains('..')) return;
+    if (!hasAllowedAudioExtension(path)) return;
+    final allowed = await isPathInsideSandbox(path);
+    if (!allowed) return;
+    if (!mounted) return;
+    ref.read(sharedFileProvider.notifier).state = path;
   }
 
   @override
@@ -90,12 +103,8 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
         darkTheme: AppTheme.dark(),
         themeMode: themeMode,
         locale: locale,
-        supportedLocales: const [Locale('ar'), Locale('en')],
-        localizationsDelegates: const [
-          GlobalMaterialLocalizations.delegate,
-          GlobalWidgetsLocalizations.delegate,
-          GlobalCupertinoLocalizations.delegate,
-        ],
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
         home: ShareHandlerScreen(
           filePath: sharedFile,
           onDone: () {
@@ -112,12 +121,8 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
       darkTheme: AppTheme.dark(),
       themeMode: themeMode,
       locale: locale,
-      supportedLocales: const [Locale('ar'), Locale('en')],
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       routerConfig: router,
     );
   }

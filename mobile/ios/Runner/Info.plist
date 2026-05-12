@@ -2,8 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- HTTPS-only app, uses standard cryptography exemption (no custom crypto). -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- App Transport Security: explicitly disable arbitrary loads.
+	     All network traffic must go over HTTPS with modern TLS. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+	</dict>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>بصوتك يحتاج الوصول لمكتبة الصور لاختيار ملفات الصوت</string>
 	<key>NSDocumentsFolderUsageDescription</key>

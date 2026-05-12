@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -28,10 +28,21 @@ from app.schemas.api_keys import (
     ApiKeyCreateResponse, ApiKeyResponse, ApiKeyUpdateRequest,
 )
 from app.schemas.settings import (
-    ProviderInfo, TranscriptionProviderResponse, TranscriptionProviderUpdateRequest,
+    ModelOption, ProviderInfo, ProviderModelUpdateRequest, ProviderTestResponse,
+    TranscriptionProviderResponse, TranscriptionProviderUpdateRequest,
+    TranscriptionProviderUsageResponse,
 )
 from app.services.subscription_service import get_user_plan, subscribe_user
-from app.services import settings_service, transcription_service
+from app.services import audit_service, settings_service, transcription_service, usage_service
+
+
+def _safe_audit(db, **kwargs):
+    """Best-effort audit-log write. NEVER raises so the calling admin action
+    can't be silently broken by a missing table or schema drift. See F27."""
+    try:
+        audit_service.record(db, **kwargs)
+    except Exception:
+        pass
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -265,21 +276,42 @@ async def update_user(
         if body.is_active is False:
             raise HTTPException(400, "You cannot deactivate your own account")
         if body.role is not None and body.role != "admin":
-            raise HTTPException(400, "You cannot remove your own admin role")
+            # F12: also block self-demotion explicitly (the schema only
+            # restricts the value space; this guards the semantics).
+            raise HTTPException(403, "You cannot remove your own admin role")
 
-    if body.is_active is not None:
+    # F12: protect other admins. A regular admin must not be able to disable
+    # another admin's account; only the affected admin (handled above) can
+    # change their own state. This keeps a hostile/compromised admin from
+    # locking everyone else out.
+    if body.is_active is False and user.role == "admin" and user.id != admin.id:
+        raise HTTPException(403, "Cannot disable another admin")
+
+    changed: dict = {}
+    if body.is_active is not None and body.is_active != user.is_active:
+        changed["is_active"] = (user.is_active, body.is_active)
         user.is_active = body.is_active
-    if body.role is not None:
+    if body.role is not None and body.role != user.role:
+        changed["role"] = (user.role, body.role)
         user.role = body.role
-    if body.full_name is not None:
+    if body.full_name is not None and body.full_name != user.full_name:
+        changed["full_name"] = (user.full_name, body.full_name)
         user.full_name = body.full_name
     if body.email is not None:
         if body.email != user.email:
             existing = db.query(User).filter(User.email == body.email, User.id != user.id).first()
             if existing:
                 raise HTTPException(409, "Email already in use")
-        user.email = body.email
+            changed["email"] = (user.email, body.email)
+            user.email = body.email
     db.commit()
+
+    if changed:
+        _safe_audit(
+            db, action="admin.user.update", actor_user_id=admin.id,
+            target_type="user", target_id=user.id,
+            metadata={"changes": {k: {"from": v[0], "to": v[1]} for k, v in changed.items()}},
+        )
     return {"message": "User updated"}
 
 
@@ -292,10 +324,16 @@ async def delete_user(
     user = _resolve_user(db, user_ref)
     if admin.id == user.id:
         raise HTTPException(400, "You cannot deactivate your own account")
+    # F12: 403 (not 400) — this is an authorization decision, not a validation error.
     if user.role == "admin":
-        raise HTTPException(400, "Cannot deactivate another admin account")
+        raise HTTPException(403, "Cannot disable another admin")
     user.is_active = False
     db.commit()
+    _safe_audit(
+        db, action="admin.user.delete", actor_user_id=admin.id,
+        target_type="user", target_id=user.id,
+        metadata={"username": user.username},
+    )
     return {"message": "User deactivated"}
 
 
@@ -345,13 +383,17 @@ async def admin_subscribe_user(
     coupon_id = None
     duration_days = body.duration_days
     if body.coupon_code:
-        from app.services.subscription_service import validate_coupon
-        coupon = validate_coupon(db, body.coupon_code)
-        if coupon.plan_id != plan.id:
-            raise HTTPException(400, "Coupon is not valid for this plan")
-        coupon_id = coupon.id
-        duration_days = duration_days or coupon.duration_days
-        coupon.times_used += 1
+        # Use the atomic UPDATE...RETURNING service so the times_used counter
+        # is bumped race-free (prevents single-use coupon being redeemed
+        # concurrently by multiple admins). The service also enforces
+        # plan/is_active/expiry rules in the same SQL statement.
+        from app.services.subscription_service import validate_and_consume_coupon
+        try:
+            consumed = validate_and_consume_coupon(db, body.coupon_code, plan.id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        coupon_id = consumed.id
+        duration_days = duration_days or consumed.duration_days
 
     if duration_days is None:
         duration_days = 30 if plan.name == "monthly" else 365 if plan.name == "annual" else 0
@@ -369,6 +411,15 @@ async def admin_subscribe_user(
     )
     db.add(sub)
     db.commit()
+
+    _safe_audit(
+        db, action="admin.user.subscribe", actor_user_id=admin.id,
+        target_type="user", target_id=user.id,
+        metadata={
+            "plan_id": plan.id, "plan_name": plan.name,
+            "coupon_id": coupon_id, "duration_days": duration_days,
+        },
+    )
 
     return await get_user(user_ref=user_ref, admin=admin, db=db)
 
@@ -388,6 +439,11 @@ async def admin_cancel_subscription(
         raise HTTPException(404, "No active subscription found")
     sub.is_active = False
     db.commit()
+    _safe_audit(
+        db, action="admin.user.unsubscribe", actor_user_id=admin.id,
+        target_type="user", target_id=user.id,
+        metadata={"subscription_id": sub.id, "plan_id": sub.plan_id},
+    )
     return {"message": "Subscription cancelled"}
 
 
@@ -456,11 +512,21 @@ async def list_requests(
 
 @router.get("/coupons")
 async def list_coupons(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    coupons = db.query(Coupon).order_by(Coupon.created_at.desc()).all()
-    return [CouponResponse.model_validate(c) for c in coupons]
+    # F29: ensure stable default ordering + pagination.
+    q = db.query(Coupon).order_by(Coupon.created_at.desc(), Coupon.id.desc())
+    total = q.count()
+    coupons = q.offset((page - 1) * per_page).limit(per_page).all()
+    return {
+        "coupons": [CouponResponse.model_validate(c) for c in coupons],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    }
 
 
 @router.post("/coupons", response_model=CouponResponse)
@@ -469,6 +535,16 @@ async def create_coupon(
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
+    # F14: validate plan existence at the route layer with a clear 404 instead
+    # of letting the FK violation surface as a generic 500 from the DB driver.
+    plan = db.query(Plan).filter(Plan.id == body.plan_id).first()
+    if not plan:
+        raise HTTPException(404, "Plan not found")
+    if not plan.is_active:
+        raise HTTPException(400, "Plan is not active")
+
+    # F13: code is already canonicalized to uppercase by the schema validator,
+    # so we can compare directly without normalizing here.
     if db.query(Coupon).filter(Coupon.code == body.code).first():
         raise HTTPException(409, "Coupon code already exists")
 
@@ -483,6 +559,12 @@ async def create_coupon(
     db.add(coupon)
     db.commit()
     db.refresh(coupon)
+
+    _safe_audit(
+        db, action="admin.coupon.create", actor_user_id=admin.id,
+        target_type="coupon", target_id=coupon.id,
+        metadata={"code": coupon.code, "plan_id": coupon.plan_id},
+    )
     return coupon
 
 
@@ -505,6 +587,10 @@ async def update_coupon(
         coupon.expires_at = body.expires_at
     db.commit()
     db.refresh(coupon)
+    _safe_audit(
+        db, action="admin.coupon.update", actor_user_id=admin.id,
+        target_type="coupon", target_id=coupon.id,
+    )
     return coupon
 
 
@@ -519,6 +605,11 @@ async def delete_coupon(
         raise HTTPException(404, "Coupon not found")
     coupon.is_active = False
     db.commit()
+    _safe_audit(
+        db, action="admin.coupon.delete", actor_user_id=admin.id,
+        target_type="coupon", target_id=coupon.id,
+        metadata={"code": coupon.code},
+    )
     return {"message": "Coupon deactivated"}
 
 
@@ -526,10 +617,21 @@ async def delete_coupon(
 
 @router.get("/plans", response_model=list[PlanAdminItem])
 async def admin_list_plans(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    plans = db.query(Plan).order_by(Plan.id).all()
+    # F29: stable ordering + pagination. Plans table has no `created_at` column
+    # so we order by id (which is monotonic) — keeps free plan first for legacy
+    # callers that depend on insertion order.
+    plans = (
+        db.query(Plan)
+        .order_by(Plan.id)
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
     plan_ids = [p.id for p in plans]
     counts = dict(
         db.query(UserSubscription.plan_id, func.count(UserSubscription.id))
@@ -579,6 +681,11 @@ async def admin_create_plan(
     db.add(plan)
     db.commit()
     db.refresh(plan)
+    _safe_audit(
+        db, action="admin.plan.create", actor_user_id=admin.id,
+        target_type="plan", target_id=plan.id,
+        metadata={"name": plan.name},
+    )
     item = PlanAdminItem.model_validate(plan)
     item.subscriber_count = 0
     return item
@@ -600,6 +707,12 @@ async def admin_update_plan(
         setattr(plan, field, value)
     db.commit()
     db.refresh(plan)
+
+    _safe_audit(
+        db, action="admin.plan.update", actor_user_id=admin.id,
+        target_type="plan", target_id=plan.id,
+        metadata={"changes": list(updates.keys())},
+    )
 
     sub_count = db.query(func.count(UserSubscription.id)).filter(
         UserSubscription.plan_id == plan.id,
@@ -623,6 +736,11 @@ async def admin_delete_plan(
         raise HTTPException(400, "Free plan cannot be deleted")
     plan.is_active = False
     db.commit()
+    _safe_audit(
+        db, action="admin.plan.delete", actor_user_id=admin.id,
+        target_type="plan", target_id=plan.id,
+        metadata={"name": plan.name},
+    )
     return {"message": "Plan deactivated"}
 
 
@@ -1049,8 +1167,20 @@ _PROVIDER_META = {
         "description": "نموذج Whisper يعمل داخل السيرفر — جودة عالية لكن أبطأ ويستهلك موارد كبيرة.",
     },
     "speechmatics": {
-        "label": "Speechmatics (خارجي)",
-        "description": "خدمة سحابية سريعة — تتطلب مفتاح SP في متغيرات البيئة.",
+        "label": "Speechmatics",
+        "description": "ASR متخصص (سحابي) — سريع، دقّة عربية ممتازة، timestamps دقيقة. يحتاج مفتاح SP.",
+    },
+    "gemini": {
+        "label": "Gemini",
+        "description": "نموذج Google متعدد الوسائط — رخيص جداً وله free tier سخي. لا يعطي timestamps للكلمات.",
+    },
+    "groq": {
+        "label": "Groq Whisper",
+        "description": "Whisper مستضاف على Groq LPU — أسرع inference متاح، free tier يومي.",
+    },
+    "assemblyai": {
+        "label": "AssemblyAI",
+        "description": "ASR متخصص بـ diarization وتحليل المشاعر، $50 credit مجاناً عند التسجيل.",
     },
 }
 
@@ -1064,15 +1194,18 @@ def _build_provider_response(db: Session) -> TranscriptionProviderResponse:
         AppSetting.key == settings_service.KEY_TRANSCRIPTION_PROVIDER
     ).first()
 
-    providers = [
-        ProviderInfo(
+    providers = []
+    for name in settings_service.VALID_PROVIDERS:
+        models = transcription_service.available_models(name)
+        providers.append(ProviderInfo(
             name=name,
             label=_PROVIDER_META[name]["label"],
             description=_PROVIDER_META[name]["description"],
             available=availability.get(name, False),
-        )
-        for name in settings_service.VALID_PROVIDERS
-    ]
+            models=[ModelOption(**m) for m in models],
+            selected_model=settings_service.get_provider_model(db, name),
+            default_model=transcription_service.default_model(name),
+        ))
 
     return TranscriptionProviderResponse(
         current=current,
@@ -1108,4 +1241,110 @@ async def update_transcription_provider_setting(
         settings_service.set_transcription_provider(db, body.provider, user_id=admin.id)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    _safe_audit(
+        db, action="admin.settings.update", actor_user_id=admin.id,
+        target_type="setting", metadata={"key": "transcription_provider", "value": body.provider},
+    )
     return _build_provider_response(db)
+
+
+@router.get(
+    "/settings/transcription-provider/usage",
+    response_model=TranscriptionProviderUsageResponse,
+)
+async def get_transcription_provider_usage(
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    providers = list(settings_service.VALID_PROVIDERS)
+    items = await usage_service.build_all_usage(db, providers)
+    return TranscriptionProviderUsageResponse(providers=items)
+
+
+@router.put(
+    "/settings/transcription-provider/model",
+    response_model=TranscriptionProviderResponse,
+)
+async def update_provider_model(
+    body: ProviderModelUpdateRequest,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    # Validate that the model id is actually one this provider offers.
+    options = transcription_service.available_models(body.provider)
+    valid_ids = {m["id"] for m in options}
+    if valid_ids and body.model not in valid_ids:
+        raise HTTPException(
+            400,
+            f"Model '{body.model}' is not offered by '{body.provider}'. "
+            f"Valid options: {sorted(valid_ids)}",
+        )
+    try:
+        settings_service.set_provider_model(db, body.provider, body.model, user_id=admin.id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _safe_audit(
+        db, action="admin.settings.update", actor_user_id=admin.id,
+        target_type="setting",
+        metadata={"key": "provider_model", "provider": body.provider, "model": body.model},
+    )
+    return _build_provider_response(db)
+
+
+@router.post(
+    "/settings/transcription-provider/test",
+    response_model=ProviderTestResponse,
+)
+async def test_transcription_provider(
+    provider: str = Form(...),
+    model: str | None = Form(None),
+    file: UploadFile = File(...),
+    admin: User = Depends(get_current_admin),
+):
+    """Run a one-off transcription with a specific provider+model and return
+    text + latency. Used by the admin 'test' button on the settings page —
+    bypasses plan resolution and is NOT logged to transcription_requests.
+    """
+    if provider not in settings_service.VALID_PROVIDERS:
+        raise HTTPException(400, f"Unknown provider '{provider}'")
+    if not transcription_service.provider_availability().get(provider, False):
+        raise HTTPException(400, f"Provider '{provider}' is not configured on this server.")
+
+    import os
+    import tempfile
+    import time
+    from app.services.audio_utils import probe_duration
+
+    suffix = os.path.splitext(file.filename or ".wav")[1] or ".wav"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        audio_duration = probe_duration(tmp_path)
+        started = time.perf_counter()
+        result = await transcription_service.transcribe_with_provider(
+            tmp_path, provider, model=model, duration=audio_duration
+        )
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+    except Exception as e:
+        raise HTTPException(500, f"Provider test failed: {e}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    text = (result.get("text") or "").strip()
+    segments = result.get("segments") or []
+    return ProviderTestResponse(
+        provider=provider,
+        model=model,
+        duration_ms=elapsed_ms,
+        audio_seconds=round(audio_duration, 2),
+        text=text,
+        language=result.get("language"),
+        word_count=len(text.split()) if text else 0,
+        segment_count=len(segments),
+    )

@@ -36,6 +36,13 @@ class TranscriptionDao {
     return db.delete('transcriptions', where: 'id = ?', whereArgs: [id]);
   }
 
+  /// Removes every locally cached transcription. Used on logout / account
+  /// switch to prevent the next user from seeing the previous user's data.
+  Future<int> deleteAll() async {
+    final db = await LocalDatabase.instance;
+    return db.delete('transcriptions');
+  }
+
   Future<int> count() async {
     final db = await LocalDatabase.instance;
     final result = await db.rawQuery('SELECT COUNT(*) as count FROM transcriptions');

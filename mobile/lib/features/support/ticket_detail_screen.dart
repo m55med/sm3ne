@@ -1,9 +1,10 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 import 'package:bisawtak/core/api/api_client.dart';
+import 'package:bisawtak/shared/utils/error_messages.dart';
 
 class TicketDetailScreen extends ConsumerStatefulWidget {
   final String publicId;
@@ -23,6 +24,7 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
   @override
   void initState() {
     super.initState();
+    initializeDateFormatting('ar', null);
     _load();
   }
 
@@ -43,15 +45,16 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
         _ticket = Map<String, dynamic>.from(resp.data);
         _loading = false;
       });
-    } on DioException catch (e) {
+    } catch (e) {
       setState(() {
-        _error = e.response?.data?['detail']?.toString() ?? 'تعذر التحميل';
+        _error = friendlyErrorMessage(e);
         _loading = false;
       });
     }
   }
 
   Future<void> _sendReply() async {
+    if (_sending) return;
     final text = _replyCtrl.text.trim();
     if (text.isEmpty) return;
     setState(() => _sending = true);
@@ -62,10 +65,13 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
       );
       _replyCtrl.clear();
       await _load();
-    } on DioException catch (e) {
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.response?.data?['detail']?.toString() ?? 'فشل الإرسال')),
+          SnackBar(
+            content: Text(friendlyErrorMessage(e)),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -274,7 +280,7 @@ class _MessageBubble extends StatelessWidget {
   String _fmt(String iso) {
     try {
       final d = DateTime.parse(iso).toLocal();
-      return DateFormat('yyyy/MM/dd HH:mm').format(d);
+      return DateFormat('yyyy/MM/dd HH:mm', 'ar').format(d);
     } catch (_) {
       return iso;
     }

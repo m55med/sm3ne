@@ -39,12 +39,12 @@ export function PlansSection() {
           {plans.map((plan, i) => (
             <div key={i} className={`relative rounded-2xl p-8 ${plan.popular ? "bg-blue-600 text-white shadow-xl shadow-blue-200 scale-105" : "bg-gray-50 text-gray-900"}`}>
               {plan.discount && (
-                <div className="absolute -top-3 right-4 bg-red-500 text-white text-xs font-bold px-3 py-1 rounded-full">
-                  خصم {plan.discount}
+                <div className="absolute -top-3 end-4 bg-red-500 text-white text-xs font-bold px-3 py-1 rounded-full">
+                  خصم <span dir="ltr">{plan.discount}</span>
                 </div>
               )}
               {plan.popular && (
-                <div className="absolute -top-3 left-4 bg-yellow-400 text-gray-900 text-xs font-bold px-3 py-1 rounded-full">
+                <div className="absolute -top-3 start-4 bg-yellow-400 text-gray-900 text-xs font-bold px-3 py-1 rounded-full">
                   الأكثر شعبية
                 </div>
               )}

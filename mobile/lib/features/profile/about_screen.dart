@@ -1,17 +1,47 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:bisawtak/config/constants.dart';
 
-class AboutScreen extends StatelessWidget {
+const String _supportEmail = 'support@neojeen.com';
+
+class AboutScreen extends StatefulWidget {
   const AboutScreen({super.key});
 
-  static const String _version = '1.0.0';
+  @override
+  State<AboutScreen> createState() => _AboutScreenState();
+}
+
+class _AboutScreenState extends State<AboutScreen> {
+  String _version = '...';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (mounted) setState(() => _version = '${info.version} (${info.buildNumber})');
+    } catch (_) {
+      if (mounted) setState(() => _version = '—');
+    }
+  }
 
   Future<void> _openUrl(String url) async {
     final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Future<void> _emailSupport() async {
+    final uri = Uri(scheme: 'mailto', path: _supportEmail);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
     }
   }
 
@@ -110,6 +140,14 @@ class AboutScreen extends StatelessWidget {
                   title: const Text('الموقع الرسمي'),
                   trailing: const Icon(Icons.open_in_new, size: 18),
                   onTap: () => _openUrl('https://voice.neojeen.com'),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.email_outlined),
+                  title: const Text('تواصل عبر البريد'),
+                  subtitle: const Text(_supportEmail),
+                  trailing: const Icon(Icons.open_in_new, size: 18),
+                  onTap: _emailSupport,
                 ),
               ],
             ),

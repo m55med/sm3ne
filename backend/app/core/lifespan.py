@@ -39,8 +39,13 @@ def _run_idempotent_ddl(db):
         "ALTER TABLE plans ADD COLUMN IF NOT EXISTS monthly_request_limit INTEGER",
         "ALTER TABLE plans ADD COLUMN IF NOT EXISTS api_daily_request_limit INTEGER DEFAULT -1",
         "ALTER TABLE plans ADD COLUMN IF NOT EXISTS description VARCHAR(500)",
+        "ALTER TABLE plans ADD COLUMN IF NOT EXISTS transcription_provider VARCHAR(20)",
+        "ALTER TABLE plans ADD COLUMN IF NOT EXISTS transcription_model VARCHAR(80)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS public_id VARCHAR(12)",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_public_id ON users(public_id)",
+        # password_changed_at supports JWT revocation on password change.
+        # Backend-3 owns the SQLAlchemy model column; we only ensure the DB column exists.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP NULL",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS plan_name_at_request VARCHAR(50)",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS plan_source_at_request VARCHAR(20)",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS daily_limit_at_request INTEGER",
@@ -52,8 +57,24 @@ def _run_idempotent_ddl(db):
         "CREATE INDEX IF NOT EXISTS idx_requests_source ON transcription_requests(source)",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'completed'",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS error_message VARCHAR(500)",
+        "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS provider_used VARCHAR(20)",
+        "UPDATE transcription_requests SET provider_used = 'whisper' WHERE provider_used IS NULL",
+        "CREATE INDEX IF NOT EXISTS idx_requests_provider_created ON transcription_requests(provider_used, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_requests_apikey_created ON transcription_requests(api_key_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_requests_status ON transcription_requests(status)",
+        """CREATE TABLE IF NOT EXISTS account_deletions (
+            id SERIAL PRIMARY KEY,
+            user_public_id VARCHAR(12),
+            username_snapshot VARCHAR(50),
+            email_snapshot VARCHAR(255),
+            auth_provider VARCHAR(20),
+            reason VARCHAR(500),
+            ip_address VARCHAR(64),
+            user_agent VARCHAR(500),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_account_deletions_created ON account_deletions(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_account_deletions_public_id ON account_deletions(user_public_id)",
         """CREATE TABLE IF NOT EXISTS login_events (
             id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES users(id),
@@ -106,6 +127,23 @@ def _run_idempotent_ddl(db):
             updated_by_user_id INTEGER REFERENCES users(id)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_app_settings_key ON app_settings(key)",
+        # audit_logs — written by admin/auth-sensitive actions. SQLAlchemy model
+        # added by Backend-3; DDL lives here so the table exists from first boot.
+        # `metadata` is a reserved name in SQLAlchemy's Declarative — the ORM
+        # model will likely map this column to a different attribute name.
+        """CREATE TABLE IF NOT EXISTS audit_logs (
+            id SERIAL PRIMARY KEY,
+            actor_user_id INTEGER REFERENCES users(id),
+            action VARCHAR(60) NOT NULL,
+            target_type VARCHAR(40),
+            target_id INTEGER,
+            metadata TEXT,
+            ip_address VARCHAR(64),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_created ON audit_logs(actor_user_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created ON audit_logs(action, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_logs_target ON audit_logs(target_type, target_id)",
     ]
     for sql in statements:
         db.execute(text(sql))

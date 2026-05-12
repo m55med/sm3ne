@@ -1,3 +1,11 @@
+"""Post-processing helpers that turn a raw Whisper-style transcription dict
+into the public API response shape: language name resolution, punctuation
+counts, segment normalization, and overall stats (char/word/segment counts).
+
+Provider-specific code lives elsewhere (whisper_service, gemini_service, ...);
+this module is provider-agnostic and only consumes the normalized dict shape.
+"""
+
 LANG_NAMES = {
     "ar": "Arabic", "en": "English", "fr": "French", "de": "German",
     "es": "Spanish", "it": "Italian", "pt": "Portuguese", "ru": "Russian",

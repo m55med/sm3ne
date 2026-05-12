@@ -1,12 +1,15 @@
 """Runtime app settings backed by the `app_settings` table.
 
-Settings are read frequently (every transcription request) so values are kept
-in an in-process cache and the DB is hit only on miss or after `set_setting`.
-The cache is intentionally simple — there's no cross-process invalidation,
-which is fine because a settings change is rare and a single backend process
-serves traffic; multi-process setups can restart workers after a change.
+Settings are read on the hot path (every transcription request), so values are
+cached in-process with a short TTL. The TTL means that in multi-worker setups
+the *other* workers will eventually pick up the new value within a few seconds
+even though there's no cross-process invalidation channel.
+
+A direct call to `set_setting` invalidates only the local worker's entry; remote
+workers expire it through TTL.
 """
 import threading
+import time
 
 from sqlalchemy.orm import Session
 
@@ -15,20 +18,51 @@ from app.db.models import AppSetting
 
 
 KEY_TRANSCRIPTION_PROVIDER = "transcription_provider"
-VALID_PROVIDERS = ("whisper", "speechmatics")
+VALID_PROVIDERS = ("whisper", "speechmatics", "gemini", "groq", "assemblyai")
 
-_cache: dict[str, str] = {}
+# Cache entries expire after this many seconds. Short enough that multi-worker
+# setups feel near-real-time after an admin change; long enough that the hot
+# path basically never hits the DB.
+_CACHE_TTL_SECONDS = 30.0
+
+
+def _model_key(provider: str) -> str:
+    return f"transcription_model:{provider}"
+
+
+# value: dict[str, tuple[value, expires_at_monotonic]]
+_cache: dict[str, tuple[str, float]] = {}
 _lock = threading.Lock()
 
 
+def _cache_get(key: str) -> str | None:
+    entry = _cache.get(key)
+    if entry is None:
+        return None
+    value, expires_at = entry
+    if time.monotonic() >= expires_at:
+        # Lazy eviction — safe since reading a stale dict tuple is harmless.
+        with _lock:
+            cur = _cache.get(key)
+            if cur is not None and cur[1] <= time.monotonic():
+                _cache.pop(key, None)
+        return None
+    return value
+
+
+def _cache_set(key: str, value: str) -> None:
+    with _lock:
+        _cache[key] = (value, time.monotonic() + _CACHE_TTL_SECONDS)
+
+
 def get_setting(db: Session, key: str, default: str | None = None) -> str | None:
-    if key in _cache:
-        return _cache[key]
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
     row = db.query(AppSetting).filter(AppSetting.key == key).first()
     value = row.value if row else default
     if value is not None:
-        with _lock:
-            _cache[key] = value
+        _cache_set(key, value)
     return value
 
 
@@ -42,8 +76,7 @@ def set_setting(db: Session, key: str, value: str, user_id: int | None = None) -
         row.updated_by_user_id = user_id
     db.commit()
     db.refresh(row)
-    with _lock:
-        _cache[key] = value
+    _cache_set(key, value)
     return row
 
 
@@ -77,3 +110,19 @@ def seed_default_transcription_provider(db: Session):
     if row is None:
         db.add(AppSetting(key=KEY_TRANSCRIPTION_PROVIDER, value=ENV_DEFAULT_PROVIDER))
         db.commit()
+
+
+def get_provider_model(db: Session, provider: str) -> str | None:
+    """Admin's chosen model for a given provider, or None to mean
+    'use the service's default'."""
+    if provider not in VALID_PROVIDERS:
+        return None
+    return get_setting(db, _model_key(provider), default=None)
+
+
+def set_provider_model(
+    db: Session, provider: str, model: str, user_id: int | None = None
+) -> AppSetting:
+    if provider not in VALID_PROVIDERS:
+        raise ValueError(f"Invalid provider '{provider}'")
+    return set_setting(db, _model_key(provider), model, user_id=user_id)

@@ -25,6 +25,26 @@ class SpeechmaticsError(RuntimeError):
     pass
 
 
+# Speechmatics doesn't have "models" per se — they have *operating points*.
+# Expose them as models so the admin UI can use the same selection pattern.
+AVAILABLE_MODELS = [
+    {
+        "id": "enhanced",
+        "label": "Enhanced (أعلى دقة، توصية افتراضية)",
+        "description": "أعلى دقة، أبطأ قليلاً وأغلى. مناسب للعربية والإنتاج.",
+    },
+    {
+        "id": "standard",
+        "label": "Standard (أرخص وأسرع)",
+        "description": "أرخص وأسرع، دقة جيدة لكن أقل من Enhanced.",
+    },
+]
+
+
+def default_model() -> str:
+    return SPEECHMATICS_OPERATING_POINT or "enhanced"
+
+
 # Punctuation marks that should close the current segment.
 _SENTENCE_END = {".", "?", "!", "؟", "…"}
 
@@ -35,23 +55,25 @@ def _auth_headers() -> dict:
     return {"Authorization": f"Bearer {SPEECHMATICS_API_KEY}"}
 
 
-def _job_config(language: str | None) -> dict:
+def _job_config(language: str | None, model: str | None) -> dict:
     return {
         "type": "transcription",
         "transcription_config": {
             "language": (language or SPEECHMATICS_LANGUAGE),
-            "operating_point": SPEECHMATICS_OPERATING_POINT,
+            "operating_point": (model or default_model()),
             "diarization": "none",
             "enable_entities": True,
         },
     }
 
 
-async def _submit_job(client: httpx.AsyncClient, path: str, language: str | None) -> str:
+async def _submit_job(
+    client: httpx.AsyncClient, path: str, language: str | None, model: str | None
+) -> str:
     filename = os.path.basename(path)
     with open(path, "rb") as f:
         files = {
-            "config": (None, json.dumps(_job_config(language)), "application/json"),
+            "config": (None, json.dumps(_job_config(language, model)), "application/json"),
             "data_file": (filename, f, "application/octet-stream"),
         }
         resp = await client.post(
@@ -199,10 +221,15 @@ def _to_whisper_dict(transcript: dict) -> dict:
     }
 
 
-async def transcribe_from_path(path: str, language: str | None = None) -> dict:
+async def transcribe_from_path(
+    path: str, model: str | None = None, language: str | None = None
+) -> dict:
     """Public entry point — submits, polls, fetches, and returns a Whisper-shaped dict."""
-    async with httpx.AsyncClient() as client:
-        job_id = await _submit_job(client, path, language)
+    # Explicit per-client timeout so even calls that miss a per-request timeout
+    # never hang forever (e.g. if a new code path is added later).
+    default_timeout = httpx.Timeout(30.0, read=60.0)
+    async with httpx.AsyncClient(timeout=default_timeout) as client:
+        job_id = await _submit_job(client, path, language, model)
         await _wait_for_job(client, job_id)
         transcript = await _fetch_transcript(client, job_id)
     return _to_whisper_dict(transcript)

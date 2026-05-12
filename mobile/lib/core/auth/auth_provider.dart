@@ -1,7 +1,9 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import 'package:bisawtak/core/api/api_client.dart';
 import 'package:bisawtak/core/auth/token_storage.dart';
+import 'package:bisawtak/data/local/transcription_dao.dart';
 import 'package:bisawtak/data/models/user.dart';
 
 enum AuthStatus { initial, authenticated, unauthenticated, loading }
@@ -25,8 +27,11 @@ class AuthState {
 class AuthNotifier extends StateNotifier<AuthState> {
   final ApiClient _api;
   final TokenStorage _tokenStorage;
+  final TranscriptionDao _transcriptionDao;
 
-  AuthNotifier(this._api, this._tokenStorage) : super(const AuthState());
+  AuthNotifier(this._api, this._tokenStorage, {TranscriptionDao? dao})
+      : _transcriptionDao = dao ?? TranscriptionDao(),
+        super(const AuthState());
 
   Future<void> checkAuth() async {
     final token = await _tokenStorage.getToken();
@@ -39,7 +44,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final user = User.fromJson(resp.data);
       state = state.copyWith(status: AuthStatus.authenticated, user: user);
     } catch (_) {
-      await _tokenStorage.clearToken();
+      await _tokenStorage.clearAll();
       state = state.copyWith(status: AuthStatus.unauthenticated);
     }
   }
@@ -51,7 +56,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         'username': username,
         'password': password,
       });
-      await _tokenStorage.saveToken(resp.data['access_token']);
+      await _persistTokensFrom(resp.data);
       await checkAuth();
     } on DioException catch (e) {
       state = state.copyWith(
@@ -70,7 +75,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         'password': password,
         if (fullName != null) 'full_name': fullName,
       });
-      await _tokenStorage.saveToken(resp.data['access_token']);
+      await _persistTokensFrom(resp.data);
       await checkAuth();
     } on DioException catch (e) {
       state = state.copyWith(
@@ -84,7 +89,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = state.copyWith(status: AuthStatus.loading);
     try {
       final resp = await _api.dio.post('/auth/google', data: {'token': idToken});
-      await _tokenStorage.saveToken(resp.data['access_token']);
+      await _persistTokensFrom(resp.data);
       await checkAuth();
     } on DioException catch (e) {
       state = state.copyWith(
@@ -94,11 +99,15 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  Future<void> appleSignIn(String identityToken) async {
+  Future<void> appleSignIn(String identityToken, {String? nonce}) async {
     state = state.copyWith(status: AuthStatus.loading);
     try {
-      final resp = await _api.dio.post('/auth/apple', data: {'token': identityToken});
-      await _tokenStorage.saveToken(resp.data['access_token']);
+      final payload = <String, dynamic>{'token': identityToken};
+      // Raw nonce that hashed to the value baked into the identity token.
+      // Backend verifies sha256(nonce) == payload.nonce to defeat replay attacks.
+      if (nonce != null) payload['nonce'] = nonce;
+      final resp = await _api.dio.post('/auth/apple', data: payload);
+      await _persistTokensFrom(resp.data);
       await checkAuth();
     } on DioException catch (e) {
       state = state.copyWith(
@@ -108,15 +117,50 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  /// Logs out the current user.
+  ///
+  /// 1. Best-effort POST to `/auth/logout` (ignored on failure).
+  /// 2. Wipes access + refresh tokens.
+  /// 3. Clears the local cached transcriptions so the next user doesn't see them.
+  /// 4. Marks state as unauthenticated.
   Future<void> logout() async {
-    await _tokenStorage.clearToken();
+    try {
+      await _api.dio.post('/auth/logout');
+    } catch (_) {
+      // Best-effort; logout proceeds even if the server call fails.
+    }
+    await _tokenStorage.clearAll();
+    try {
+      await _transcriptionDao.deleteAll();
+    } catch (_) {
+      // Don't block logout on DB failure.
+    }
     state = const AuthState(status: AuthStatus.unauthenticated);
+  }
+
+  Future<void> _persistTokensFrom(dynamic data) async {
+    if (data is! Map) return;
+    final access = data['access_token'];
+    if (access is String && access.isNotEmpty) {
+      await _tokenStorage.saveToken(access);
+    }
+    final refresh = data['refresh_token'];
+    if (refresh is String && refresh.isNotEmpty) {
+      await _tokenStorage.saveRefreshToken(refresh);
+    }
   }
 }
 
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  return AuthNotifier(
+  final notifier = AuthNotifier(
     ref.read(apiClientProvider),
     ref.read(tokenStorageProvider),
   );
+
+  // React to global 401 invalidation signals from the API client.
+  ref.listen(authInvalidationProvider, (_, __) {
+    notifier.logout();
+  });
+
+  return notifier;
 });

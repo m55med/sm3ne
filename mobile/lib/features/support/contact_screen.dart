@@ -1,9 +1,13 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 import 'package:bisawtak/core/api/api_client.dart';
+import 'package:bisawtak/data/repositories/support_repository.dart';
+import 'package:bisawtak/shared/utils/error_messages.dart';
+import 'package:bisawtak/shared/widgets/empty_state.dart';
+import 'package:bisawtak/shared/widgets/error_view.dart';
 
 class ContactScreen extends ConsumerStatefulWidget {
   const ContactScreen({super.key});
@@ -20,6 +24,9 @@ class _ContactScreenState extends ConsumerState<ContactScreen> {
   @override
   void initState() {
     super.initState();
+    // Make sure intl's Arabic locale data is initialised once before any
+    // DateFormat('...', 'ar') call.
+    initializeDateFormatting('ar', null);
     _load();
   }
 
@@ -29,15 +36,20 @@ class _ContactScreenState extends ConsumerState<ContactScreen> {
       _error = null;
     });
     try {
+      // Stays on the raw API call here because the existing UI relies on
+      // metadata (ticket_type, reply_count, ...) not yet exposed by
+      // SupportRepository's typed model.
       final resp = await ref.read(apiClientProvider).dio.get('/support/tickets');
-      final data = List<Map<String, dynamic>>.from(resp.data['tickets'] ?? []);
+      final data = resp.data is Map<String, dynamic>
+          ? List<Map<String, dynamic>>.from(resp.data['tickets'] ?? const [])
+          : List<Map<String, dynamic>>.from(resp.data as List);
       setState(() {
         _tickets = data;
         _loading = false;
       });
-    } on DioException catch (e) {
+    } catch (e) {
       setState(() {
-        _error = e.response?.data?['detail']?.toString() ?? 'تعذر تحميل الرسائل';
+        _error = friendlyErrorMessage(e);
         _loading = false;
       });
     }
@@ -77,11 +89,26 @@ class _ContactScreenState extends ConsumerState<ContactScreen> {
 
   Widget _buildBody() {
     if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return _ErrorView(message: _error!, onRetry: _load);
+    if (_error != null) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          const SizedBox(height: 120),
+          ErrorView(message: _error!, onRetry: _load),
+        ],
+      );
+    }
     if (_tickets.isEmpty) {
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        children: const [SizedBox(height: 120), _EmptyView()],
+        children: const [
+          SizedBox(height: 120),
+          EmptyState(
+            icon: Icons.forum_outlined,
+            title: 'لا توجد رسائل بعد',
+            message: 'اضغط "رسالة جديدة" لو عندك سؤال أو اقتراح',
+          ),
+        ],
       );
     }
     return ListView.builder(
@@ -205,57 +232,9 @@ class _TypeBadge extends StatelessWidget {
 String _formatDate(String iso) {
   try {
     final d = DateTime.parse(iso).toLocal();
-    return DateFormat('yyyy/MM/dd HH:mm').format(d);
+    return DateFormat('yyyy/MM/dd HH:mm', 'ar').format(d);
   } catch (_) {
     return iso;
-  }
-}
-
-class _EmptyView extends StatelessWidget {
-  const _EmptyView();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        children: [
-          Icon(Icons.forum_outlined, size: 72, color: Colors.grey.shade300),
-          const SizedBox(height: 12),
-          Text('لا توجد رسائل بعد', style: TextStyle(fontSize: 18, color: Colors.grey.shade600)),
-          const SizedBox(height: 6),
-          Text(
-            'اضغط "رسالة جديدة" لو عندك سؤال أو اقتراح',
-            style: TextStyle(color: Colors.grey.shade500),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ErrorView extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-  const _ErrorView({required this.message, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.error_outline, size: 48, color: Colors.red.shade300),
-            const SizedBox(height: 12),
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            FilledButton(onPressed: onRetry, child: const Text('إعادة المحاولة')),
-          ],
-        ),
-      ),
-    );
   }
 }
 
@@ -284,21 +263,34 @@ class _NewTicketSheetState extends ConsumerState<_NewTicketSheet> {
   }
 
   Future<void> _submit() async {
+    if (_sending) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() {
       _sending = true;
       _error = null;
     });
+    final subject = _subjectCtrl.text.trim();
+    final message = _messageCtrl.text.trim();
     try {
-      await ref.read(apiClientProvider).dio.post('/support/tickets', data: {
-        'ticket_type': _type,
-        'subject': _subjectCtrl.text.trim(),
-        'message': _messageCtrl.text.trim(),
-      });
+      // Route through the typed repository when subject/body are sufficient.
+      // For ticket type metadata not yet supported by the repo, fall back to
+      // direct API call.
+      if (_type == 'contact') {
+        await ref.read(supportRepositoryProvider).createTicket(
+              subject: subject,
+              body: message,
+            );
+      } else {
+        await ref.read(apiClientProvider).dio.post('/support/tickets', data: {
+          'ticket_type': _type,
+          'subject': subject,
+          'message': message,
+        });
+      }
       if (mounted) Navigator.of(context).pop(true);
-    } on DioException catch (e) {
+    } catch (e) {
       setState(() {
-        _error = e.response?.data?['detail']?.toString() ?? 'تعذر الإرسال';
+        _error = friendlyErrorMessage(e);
         _sending = false;
       });
     }
@@ -337,13 +329,14 @@ class _NewTicketSheetState extends ConsumerState<_NewTicketSheet> {
                   DropdownMenuItem(value: 'bug', child: Text('بلاغ عن خطأ')),
                   DropdownMenuItem(value: 'other', child: Text('أخرى')),
                 ],
-                onChanged: (v) => setState(() => _type = v ?? 'contact'),
+                onChanged: _sending ? null : (v) => setState(() => _type = v ?? 'contact'),
                 decoration: const InputDecoration(labelText: 'النوع'),
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _subjectCtrl,
                 decoration: const InputDecoration(labelText: 'العنوان'),
+                enabled: !_sending,
                 validator: (v) => (v == null || v.trim().length < 3) ? 'لازم العنوان 3 حروف على الأقل' : null,
               ),
               const SizedBox(height: 12),
@@ -351,6 +344,7 @@ class _NewTicketSheetState extends ConsumerState<_NewTicketSheet> {
                 controller: _messageCtrl,
                 decoration: const InputDecoration(labelText: 'الرسالة', alignLabelWithHint: true),
                 maxLines: 6,
+                enabled: !_sending,
                 validator: (v) => (v == null || v.trim().length < 5) ? 'الرسالة قصيرة جداً' : null,
               ),
               if (_error != null) ...[

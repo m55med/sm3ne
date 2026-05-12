@@ -3,8 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
-from app.core.config import MODEL_NAME, limiter
+from app.core.config import MODEL_NAME, limiter, CORS_ALLOWED_ORIGINS
 from app.core.lifespan import lifespan
+from app.core.security_headers import SecurityHeadersMiddleware
 from app.routes.api_keys import router as api_keys_router
 from app.routes.auth import router as auth_router
 from app.routes.transcribe import router as transcribe_router
@@ -12,21 +13,26 @@ from app.routes.profile import router as profile_router
 from app.routes.plans import router as plans_router
 from app.routes.support import router as support_router
 from app.routes.admin import router as admin_router
+from app.routes.legal import router as legal_router
 from app.services import whisper_service
 
 app = FastAPI(title="Bisawtak - Speech-to-Text API", version="2.0.0", lifespan=lifespan)
 
-# CORS. allow_origins=["*"] with allow_credentials=True is rejected by browsers;
-# since admin auth uses Authorization: Bearer (localStorage), cookies/credentials
-# aren't needed, so we turn credentials off and keep the wildcard.
+# Middleware order in Starlette: the LAST added wraps OUTERMOST, so we add CORS
+# FIRST and SecurityHeaders SECOND. That way SecurityHeaders runs outermost and
+# its headers land on every response (including CORS preflight responses).
+#
+# CORS is locked down to an explicit allowlist via CORS_ALLOWED_ORIGINS env.
+# Credentials stay OFF because admin auth uses Authorization: Bearer (no cookies).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
@@ -42,6 +48,9 @@ app.include_router(api_keys_router, prefix=API_PREFIX)
 app.include_router(transcribe_router, prefix=API_PREFIX)
 app.include_router(support_router, prefix=API_PREFIX)
 app.include_router(admin_router, prefix=API_PREFIX)
+# Legal pages live at the root (/privacy, /terms, /support) because Apple &
+# Google require the URLs to be plain-link friendly, not API-prefixed.
+app.include_router(legal_router)
 
 
 @app.get(f"{API_PREFIX}/health")

@@ -6,10 +6,15 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { RefreshButton } from "@/components/refresh-button";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { toast } from "@/components/toast";
+import { formatDate, formatNumber } from "@/lib/format";
 import type { Coupon } from "@/lib/types";
 
 export default function CouponsPage() {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [togglingId, setTogglingId] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     const data = await api<Coupon[]>("/admin/coupons");
@@ -19,14 +24,32 @@ export default function CouponsPage() {
   useEffect(() => { load(); }, [load]);
 
   async function toggleCoupon(id: number, isActive: boolean) {
-    await api(`/admin/coupons/${id}`, { method: "PUT", body: JSON.stringify({ is_active: !isActive }) });
-    setCoupons(coupons.map((c) => c.id === id ? { ...c, is_active: !isActive } : c));
+    setTogglingId(id);
+    try {
+      await api(`/admin/coupons/${id}`, { method: "PUT", body: JSON.stringify({ is_active: !isActive }) });
+      toast.success(isActive ? "تم تعطيل الكوبون" : "تم تفعيل الكوبون");
+      // إعادة جلب لضمان مزامنة البيانات بدلاً من تحديث متفائل
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "فشل تغيير الحالة");
+    } finally {
+      setTogglingId(null);
+    }
   }
 
-  async function deleteCoupon(id: number) {
-    if (!confirm("هل أنت متأكد من حذف هذا الكوبون؟")) return;
-    await api(`/admin/coupons/${id}`, { method: "DELETE" });
-    setCoupons(coupons.map((c) => c.id === id ? { ...c, is_active: false } : c));
+  async function performDelete() {
+    if (confirmDeleteId === null) return;
+    const id = confirmDeleteId;
+    try {
+      await api(`/admin/coupons/${id}`, { method: "DELETE" });
+      toast.success("تم حذف الكوبون");
+      // إعادة جلب القائمة — لأن السيرفر قد يحذف الصف فعلياً (وليس مجرد تعطيل)
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "فشل الحذف");
+    } finally {
+      setConfirmDeleteId(null);
+    }
   }
 
   return (
@@ -58,16 +81,27 @@ export default function CouponsPage() {
                 <tr key={c.id} className="border-b last:border-0">
                   <td className="py-3 font-mono font-bold">{c.code}</td>
                   <td className="py-3"><Badge variant="secondary">Plan #{c.plan_id}</Badge></td>
-                  <td className="py-3">{c.duration_days}</td>
-                  <td className="py-3">{c.times_used}/{c.max_uses === -1 ? "∞" : c.max_uses}</td>
+                  <td className="py-3">{formatNumber(c.duration_days)}</td>
+                  <td className="py-3">{formatNumber(c.times_used)}/{c.max_uses === -1 ? "∞" : formatNumber(c.max_uses)}</td>
                   <td className="py-3"><Badge variant={c.is_active ? "default" : "destructive"}>{c.is_active ? "نشط" : "معطل"}</Badge></td>
-                  <td className="py-3 text-gray-500 text-xs">{new Date(c.created_at).toLocaleDateString("ar")}</td>
-                  <td className="py-3 text-gray-500 text-xs">{c.expires_at ? new Date(c.expires_at).toLocaleDateString("ar") : "—"}</td>
+                  <td className="py-3 text-gray-500 text-xs">{formatDate(c.created_at)}</td>
+                  <td className="py-3 text-gray-500 text-xs">{c.expires_at ? formatDate(c.expires_at) : "—"}</td>
                   <td className="py-3 flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => toggleCoupon(c.id, c.is_active)}>
-                      {c.is_active ? "تعطيل" : "تفعيل"}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => toggleCoupon(c.id, c.is_active)}
+                      disabled={togglingId === c.id}
+                    >
+                      {togglingId === c.id ? "..." : (c.is_active ? "تعطيل" : "تفعيل")}
                     </Button>
-                    <Button variant="destructive" size="sm" onClick={() => deleteCoupon(c.id)}>حذف</Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setConfirmDeleteId(c.id)}
+                    >
+                      حذف
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -78,6 +112,16 @@ export default function CouponsPage() {
           </table>
         </div>
       </Card>
+
+      <ConfirmDialog
+        open={confirmDeleteId !== null}
+        onOpenChange={(open) => { if (!open) setConfirmDeleteId(null); }}
+        title="حذف الكوبون؟"
+        description="سيتم حذف الكوبون نهائياً ولن يمكن استخدامه مرة أخرى."
+        confirmLabel="حذف"
+        destructive
+        onConfirm={performDelete}
+      />
     </div>
   );
 }

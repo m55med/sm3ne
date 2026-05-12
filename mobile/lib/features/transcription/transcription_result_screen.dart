@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart' as share;
 import 'package:bisawtak/data/local/transcription_dao.dart';
 import 'package:bisawtak/data/models/transcription.dart';
+import 'package:bisawtak/shared/utils/error_messages.dart';
+import 'package:bisawtak/shared/widgets/confirm_dialog.dart';
 
 class TranscriptionResultScreen extends ConsumerWidget {
   final int transcriptionId;
@@ -24,10 +26,7 @@ class TranscriptionResultScreen extends ConsumerWidget {
             actions: [
               IconButton(
                 icon: const Icon(Icons.delete_outline),
-                onPressed: () async {
-                  await TranscriptionDao().delete(t.id!);
-                  if (context.mounted) Navigator.pop(context);
-                },
+                onPressed: () => _confirmDelete(context, t),
               ),
             ],
           ),
@@ -83,12 +82,7 @@ class TranscriptionResultScreen extends ConsumerWidget {
                   children: [
                     Expanded(
                       child: ElevatedButton.icon(
-                        onPressed: () {
-                          Clipboard.setData(ClipboardData(text: t.text));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('تم نسخ النص!')),
-                          );
-                        },
+                        onPressed: () => _copy(context, t.text),
                         icon: const Icon(Icons.copy),
                         label: const Text('نسخ'),
                       ),
@@ -113,6 +107,44 @@ class TranscriptionResultScreen extends ConsumerWidget {
         );
       },
     );
+  }
+
+  Future<void> _copy(BuildContext context, String text) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم نسخ النص!')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _confirmDelete(BuildContext context, Transcription t) async {
+    final ok = await showConfirmDialog(
+      context,
+      title: 'حذف التسجيل',
+      message: 'هل تريد حذف هذا التسجيل نهائياً؟',
+      confirmLabel: 'حذف',
+      destructive: true,
+    );
+    if (!ok || !context.mounted) return;
+    try {
+      await TranscriptionDao().delete(t.id!);
+      if (context.mounted) Navigator.pop(context);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 }
 

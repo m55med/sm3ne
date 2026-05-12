@@ -1,7 +1,20 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _ensure_expires_in_future(v: Optional[datetime]) -> Optional[datetime]:
+    """F16: reject expires_at in the past — an already-expired key is a footgun
+    (it'd be created then immediately reject every request)."""
+    if v is None:
+        return v
+    # Normalize to aware UTC for comparison; pydantic passes naive datetimes
+    # through unchanged for older client payloads.
+    cmp = v if v.tzinfo is not None else v.replace(tzinfo=timezone.utc)
+    if cmp <= datetime.now(timezone.utc):
+        raise ValueError("expires_at must be in the future")
+    return v
 
 
 class ApiKeyCreateRequest(BaseModel):
@@ -10,6 +23,11 @@ class ApiKeyCreateRequest(BaseModel):
     # Admin-only fields — silently ignored when caller is not an admin
     requests_per_minute: Optional[int] = None
     requests_per_day: Optional[int] = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def _validate_expires_at(cls, v: Optional[datetime]) -> Optional[datetime]:
+        return _ensure_expires_in_future(v)
 
 
 class ApiKeyCreateResponse(BaseModel):
@@ -48,6 +66,11 @@ class ApiKeyUpdateRequest(BaseModel):
     # Admin-only — rejected with 403 for non-admins in the user route
     requests_per_minute: Optional[int] = None
     requests_per_day: Optional[int] = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def _validate_expires_at(cls, v: Optional[datetime]) -> Optional[datetime]:
+        return _ensure_expires_in_future(v)
 
 
 class AdminApiKeyCreateRequest(ApiKeyCreateRequest):

@@ -43,3 +43,16 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Flutter dev logs (must never be committed)
+flutter_*.log
+**/flutter_*.log
+
+# Signing / secrets (NEVER commit)
+android/key.properties
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+
+# Generated tooling files (also covered above but listed explicitly)
+.dart_tool/
+.flutter-plugins-dependencies

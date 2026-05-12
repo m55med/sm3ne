@@ -8,21 +8,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { RefreshButton } from "@/components/refresh-button";
+import { toast } from "@/components/toast";
+import { TICKET_STATUS_LABEL, TICKET_TYPE_LABEL } from "@/lib/labels";
+import { formatDateTime } from "@/lib/format";
 import type { TicketDetail, TicketStatus } from "@/lib/types";
-
-const STATUS_LABEL: Record<TicketStatus, string> = {
-  open: "جديدة",
-  in_progress: "جاري العمل",
-  resolved: "تم الحل",
-  closed: "مغلقة",
-};
-
-const TYPE_LABEL: Record<string, string> = {
-  contact: "استفسار",
-  suggestion: "اقتراح",
-  bug: "بلاغ خطأ",
-  other: "أخرى",
-};
 
 export default function AdminTicketDetail() {
   const { id } = useParams();
@@ -40,14 +29,16 @@ export default function AdminTicketDetail() {
   useEffect(() => { load(); }, [load]);
 
   async function sendReply() {
-    if (!reply.trim()) return;
+    const trimmed = reply.trim();
+    if (!trimmed) return;
     setSending(true);
     try {
-      await api(`/admin/tickets/${id}/replies`, { method: "POST", body: JSON.stringify({ message: reply }) });
+      await api(`/admin/tickets/${id}/replies`, { method: "POST", body: JSON.stringify({ message: trimmed }) });
+      toast.success("تم إرسال الرد");
       setReply("");
       await load();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "فشل الإرسال");
+      toast.error(e instanceof Error ? e.message : "فشل الإرسال");
     } finally {
       setSending(false);
     }
@@ -57,7 +48,10 @@ export default function AdminTicketDetail() {
     setSavingStatus(true);
     try {
       await api(`/admin/tickets/${id}/status`, { method: "PUT", body: JSON.stringify({ status: newStatus }) });
+      toast.success("تم تحديث الحالة");
       await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "فشل تحديث الحالة");
     } finally {
       setSavingStatus(false);
     }
@@ -78,9 +72,10 @@ export default function AdminTicketDetail() {
             value={ticket.status}
             onChange={(e) => changeStatus(e.target.value as TicketStatus)}
             disabled={savingStatus}
+            aria-label="تغيير حالة التكت"
           >
-            {(Object.keys(STATUS_LABEL) as TicketStatus[]).map((s) => (
-              <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+            {(Object.keys(TICKET_STATUS_LABEL) as TicketStatus[]).map((s) => (
+              <option key={s} value={s}>{TICKET_STATUS_LABEL[s]}</option>
             ))}
           </select>
         </div>
@@ -91,8 +86,8 @@ export default function AdminTicketDetail() {
           <div className="flex-1">
             <h1 className="text-xl font-bold mb-2">{ticket.subject}</h1>
             <div className="flex gap-2 items-center text-sm">
-              <Badge variant="outline">{TYPE_LABEL[ticket.ticket_type] || ticket.ticket_type}</Badge>
-              <Badge>{STATUS_LABEL[ticket.status]}</Badge>
+              <Badge variant="outline">{TICKET_TYPE_LABEL[ticket.ticket_type] || ticket.ticket_type}</Badge>
+              <Badge>{TICKET_STATUS_LABEL[ticket.status] || ticket.status}</Badge>
               {ticket.username && (
                 <>
                   <span className="text-gray-400">·</span>
@@ -104,7 +99,7 @@ export default function AdminTicketDetail() {
               {ticket.created_at && (
                 <>
                   <span className="text-gray-400">·</span>
-                  <span className="text-gray-500 text-xs">{new Date(ticket.created_at).toLocaleString("ar")}</span>
+                  <span className="text-gray-500 text-xs">{formatDateTime(ticket.created_at)}</span>
                 </>
               )}
             </div>
@@ -112,7 +107,7 @@ export default function AdminTicketDetail() {
         </div>
 
         <div className="space-y-3">
-          {/* Initial message */}
+          {/* الرسالة الأصلية */}
           <MessageBubble
             authorName={ticket.username || "مستخدم"}
             isAdmin={false}
@@ -120,7 +115,7 @@ export default function AdminTicketDetail() {
             createdAt={ticket.created_at}
           />
 
-          {/* Replies */}
+          {/* الردود */}
           {ticket.replies.map((r, i) => (
             <MessageBubble
               key={r.public_id || i}
@@ -143,6 +138,7 @@ export default function AdminTicketDetail() {
               onChange={(e) => setReply(e.target.value)}
               placeholder="اكتب ردك كـ فريق الدعم..."
               rows={3}
+              aria-label="نص الرد"
             />
             <div className="flex justify-end mt-3">
               <Button onClick={sendReply} disabled={sending || !reply.trim()}>
@@ -172,7 +168,7 @@ function MessageBubble({ authorName, isAdmin, message, createdAt }: {
         </div>
         <p className="text-sm whitespace-pre-wrap leading-relaxed">{message}</p>
         {createdAt && (
-          <p className="text-[10px] text-gray-400 mt-1">{new Date(createdAt).toLocaleString("ar")}</p>
+          <p className="text-[10px] text-gray-400 mt-1">{formatDateTime(createdAt)}</p>
         )}
       </div>
     </div>

@@ -216,18 +216,45 @@ export interface PlanAdminItem {
   description: string | null;
   is_active: boolean;
   subscriber_count: number;
+  transcription_provider: string | null;
+  transcription_model: string | null;
 }
 
 export type PlanCreateBody = Omit<PlanAdminItem, "id" | "subscriber_count">;
 export type PlanUpdateBody = Partial<Omit<PlanAdminItem, "id" | "name" | "subscriber_count">>;
 
-export type TranscriptionProvider = "whisper" | "speechmatics";
+export type TranscriptionProvider =
+  | "whisper"
+  | "speechmatics"
+  | "gemini"
+  | "groq"
+  | "assemblyai";
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  description: string | null;
+}
 
 export interface TranscriptionProviderInfo {
   name: TranscriptionProvider;
   label: string;
   description: string;
   available: boolean;
+  models: ModelOption[];
+  selected_model: string | null;
+  default_model: string | null;
+}
+
+export interface ProviderTestResult {
+  provider: TranscriptionProvider;
+  model: string | null;
+  duration_ms: number;
+  audio_seconds: number;
+  text: string;
+  language: string | null;
+  word_count: number;
+  segment_count: number;
 }
 
 export interface TranscriptionProviderSetting {
@@ -236,4 +263,31 @@ export interface TranscriptionProviderSetting {
   updated_at: string | null;
   updated_by_user_id: number | null;
   providers: TranscriptionProviderInfo[];
+}
+
+export interface ProviderUsageLocal {
+  requests_today: number;
+  requests_month: number;
+  requests_total: number;
+  seconds_today: number;
+  seconds_month: number;
+  seconds_total: number;
+}
+
+export interface ProviderUsageRemote {
+  period: string;
+  total_hours_month: number;
+}
+
+export interface ProviderUsage {
+  provider: TranscriptionProvider;
+  free_tier_label: string | null;
+  free_tier_limit_text: string | null;
+  billing_unit: string | null;
+  local: ProviderUsageLocal;
+  remote: ProviderUsageRemote | null;
+}
+
+export interface TranscriptionProviderUsageResponse {
+  providers: ProviderUsage[];
 }

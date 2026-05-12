@@ -46,3 +46,9 @@ secrets/
 AuthKey_*
 id_rsa*
 known_hosts
+
+# Android signing
+mobile/secrets/
+mobile/android/key.properties
+*.jks
+*.keystore

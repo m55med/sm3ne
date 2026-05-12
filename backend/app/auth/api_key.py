@@ -1,8 +1,11 @@
 import hashlib
+import hmac
 import secrets
 from typing import Optional
 
 from fastapi import Request
+
+from app.core.config import API_KEY_PEPPER
 
 KEY_PREFIX_NAMESPACE = "bsw_live_"
 PREFIX_VISIBLE_CHARS = 4
@@ -13,7 +16,8 @@ def generate_api_key() -> tuple[str, str, str]:
 
     plaintext is shown to the user once.
     key_prefix is stored for identification in listings.
-    key_hash is the sha256 hex stored in DB for lookup.
+    key_hash is the HMAC-SHA256 hex of plaintext under the server-side pepper
+    (see hash_api_key).
     """
     secret = secrets.token_urlsafe(16)
     plaintext = KEY_PREFIX_NAMESPACE + secret
@@ -23,7 +27,17 @@ def generate_api_key() -> tuple[str, str, str]:
 
 
 def hash_api_key(plaintext: str) -> str:
-    return hashlib.sha256(plaintext.encode()).hexdigest()
+    """HMAC-SHA256 the plaintext under the server-side pepper.
+
+    SECURITY NOTE: Switching from plain sha256 to HMAC with a pepper INVALIDATES
+    every previously issued API key, because the stored hash format changes.
+    Operators must rotate keys after deploying this change.
+    """
+    return hmac.new(
+        API_KEY_PEPPER.encode("utf-8"),
+        plaintext.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def extract_api_key_from_request(request: Request) -> Optional[str]:

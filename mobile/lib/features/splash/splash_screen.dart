@@ -19,14 +19,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   }
 
   Future<void> _navigate() async {
-    await Future.delayed(const Duration(seconds: 2));
-    if (!mounted) return;
-
+    // No artificial delay — let the auth check drive when we navigate.
     final tokenStorage = ref.read(tokenStorageProvider);
     final isFirst = await tokenStorage.isFirstLaunch();
+    if (!mounted) return;
 
     if (isFirst) {
-      if (mounted) context.go('/onboarding');
+      context.go('/onboarding');
       return;
     }
 

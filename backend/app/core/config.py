@@ -1,3 +1,4 @@
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -9,6 +10,8 @@ from slowapi.util import get_remote_address
 # Load .env file
 env_path = Path(__file__).resolve().parent.parent.parent / ".env"
 load_dotenv(env_path)
+
+logger = logging.getLogger(__name__)
 
 # Whisper
 MODEL_NAME = os.getenv("WHISPER_MODEL", "large-v3")
@@ -26,20 +29,85 @@ SPEECHMATICS_OPERATING_POINT = os.getenv("SPEECHMATICS_OPERATING_POINT", "enhanc
 SPEECHMATICS_POLL_INTERVAL = float(os.getenv("SPEECHMATICS_POLL_INTERVAL", "2.0"))
 SPEECHMATICS_TIMEOUT_SECONDS = int(os.getenv("SPEECHMATICS_TIMEOUT_SECONDS", "600"))
 
-# Provider selection: "speechmatics" or "whisper". Auto-picks speechmatics if SP token exists.
+# Gemini (Google Generative AI — multimodal model, cheap pay-as-you-go + generous free tier)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip()
+GEMINI_BASE_URL = os.getenv(
+    "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
+).strip().rstrip("/")
+GEMINI_LANGUAGE_HINT = os.getenv("GEMINI_LANGUAGE_HINT", "ar").strip()
+GEMINI_INLINE_MAX_BYTES = int(os.getenv("GEMINI_INLINE_MAX_BYTES", str(15 * 1024 * 1024)))
+
+# Groq (Whisper hosted on Groq's LPU — fastest Whisper inference available)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").strip().rstrip("/")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "whisper-large-v3-turbo").strip()
+GROQ_LANGUAGE = os.getenv("GROQ_LANGUAGE", "ar").strip()
+
+# AssemblyAI (managed ASR with diarization + sentiment, generous free credit)
+ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY", "").strip()
+ASSEMBLYAI_BASE_URL = os.getenv(
+    "ASSEMBLYAI_BASE_URL", "https://api.assemblyai.com/v2"
+).strip().rstrip("/")
+ASSEMBLYAI_MODEL = os.getenv("ASSEMBLYAI_MODEL", "universal").strip()
+ASSEMBLYAI_LANGUAGE = os.getenv("ASSEMBLYAI_LANGUAGE", "ar").strip()
+ASSEMBLYAI_POLL_INTERVAL = float(os.getenv("ASSEMBLYAI_POLL_INTERVAL", "2.0"))
+ASSEMBLYAI_TIMEOUT_SECONDS = int(os.getenv("ASSEMBLYAI_TIMEOUT_SECONDS", "600"))
+
+# Provider selection: "speechmatics" | "gemini" | "groq" | "assemblyai" | "whisper".
+# Auto-pick: prefer speechmatics > gemini > groq > assemblyai > whisper based on
+# which keys are present.
 _provider_env = os.getenv("TRANSCRIPTION_PROVIDER", "").strip().lower()
-if _provider_env in ("speechmatics", "whisper"):
+if _provider_env in ("speechmatics", "gemini", "groq", "assemblyai", "whisper"):
     TRANSCRIPTION_PROVIDER = _provider_env
+elif SPEECHMATICS_API_KEY:
+    TRANSCRIPTION_PROVIDER = "speechmatics"
+elif GEMINI_API_KEY:
+    TRANSCRIPTION_PROVIDER = "gemini"
+elif GROQ_API_KEY:
+    TRANSCRIPTION_PROVIDER = "groq"
+elif ASSEMBLYAI_API_KEY:
+    TRANSCRIPTION_PROVIDER = "assemblyai"
 else:
-    TRANSCRIPTION_PROVIDER = "speechmatics" if SPEECHMATICS_API_KEY else "whisper"
+    TRANSCRIPTION_PROVIDER = "whisper"
 
-# Database
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://bisawtak:bisawtak_pass@postgres:5432/bisawtak")
+# -----------------------------------------------------------------------------
+# Database  (required — no insecure default)
+# -----------------------------------------------------------------------------
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL is not set. Configure it in the environment, e.g. "
+        "postgresql://user:pass@host:5432/dbname"
+    )
 
-# JWT
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me")
+# -----------------------------------------------------------------------------
+# JWT secret  (required, must be strong)
+# -----------------------------------------------------------------------------
+SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
+if not SECRET_KEY or SECRET_KEY == "change-me" or len(SECRET_KEY) < 32:
+    raise RuntimeError(
+        "SECRET_KEY is missing, equals the placeholder 'change-me', or is shorter "
+        "than 32 characters. Generate one with: "
+        "python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+    )
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_MINUTES = int(os.getenv("TOKEN_EXPIRE_MINUTES", "1440"))
+JWT_ISSUER = "bisawtak"
+JWT_AUDIENCE = "bisawtak-app"
+
+# -----------------------------------------------------------------------------
+# API-key pepper (HMAC server-side secret applied to API keys before hashing).
+# Falls back to SECRET_KEY when unset — works but rotating SECRET_KEY would then
+# invalidate all keys, so a dedicated value is strongly preferred.
+# -----------------------------------------------------------------------------
+API_KEY_PEPPER = os.getenv("API_KEY_PEPPER", "").strip()
+if not API_KEY_PEPPER:
+    logger.warning(
+        "API_KEY_PEPPER is not set; falling back to SECRET_KEY. Set a dedicated "
+        "API_KEY_PEPPER so rotating SECRET_KEY does not invalidate API keys."
+    )
+    API_KEY_PEPPER = SECRET_KEY
 
 # Email
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
@@ -49,15 +117,39 @@ SMTP_PASS = os.getenv("SMTP_PASS", "")
 SMTP_FROM = os.getenv("SMTP_FROM", "noreply@bisawtak.com")
 
 # Social Auth
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-APPLE_TEAM_ID = os.getenv("APPLE_TEAM_ID", "")
-APPLE_KEY_ID = os.getenv("APPLE_KEY_ID", "")
-APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID", "com.bisawtak.bisawtak")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+APPLE_TEAM_ID = os.getenv("APPLE_TEAM_ID", "").strip()
+APPLE_KEY_ID = os.getenv("APPLE_KEY_ID", "").strip()
+APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID", "").strip()
+# If APPLE_CLIENT_ID is empty, /auth/apple endpoints should return 503; verify
+# function in app/auth/social.py enforces this at request time.
 
-# Admin
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@bisawtak.com")
+# -----------------------------------------------------------------------------
+# Admin bootstrap (required, strong password)
+# -----------------------------------------------------------------------------
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@bisawtak.com").strip()
+if not ADMIN_USERNAME:
+    raise RuntimeError("ADMIN_USERNAME is required (no default allowed).")
+if not ADMIN_PASSWORD or len(ADMIN_PASSWORD) < 12:
+    raise RuntimeError(
+        "ADMIN_PASSWORD is missing or shorter than 12 characters. Set a strong "
+        "value in the environment before starting the server."
+    )
+
+# -----------------------------------------------------------------------------
+# CORS
+# -----------------------------------------------------------------------------
+_cors_raw = os.getenv("CORS_ALLOWED_ORIGINS", "https://voice.neojeen.com")
+CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+
+# -----------------------------------------------------------------------------
+# Rate limiter storage. Default in-memory works for single-process deployments
+# only; for multi-worker uvicorn/gunicorn set RATE_LIMIT_STORAGE_URI (e.g.
+# redis://host:6379/0) so limits are shared.
+# -----------------------------------------------------------------------------
+RATE_LIMIT_STORAGE_URI = os.getenv("RATE_LIMIT_STORAGE_URI", "").strip()
 
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
@@ -73,4 +165,12 @@ def _rate_limit_key(request):
     return get_remote_address(request)
 
 
-limiter = Limiter(key_func=_rate_limit_key)
+if RATE_LIMIT_STORAGE_URI:
+    limiter = Limiter(key_func=_rate_limit_key, storage_uri=RATE_LIMIT_STORAGE_URI)
+else:
+    logger.warning(
+        "RATE_LIMIT_STORAGE_URI is not set; using in-memory rate-limit storage. "
+        "This is per-process only — set a shared URI (e.g. redis://...) for "
+        "multi-worker deployments."
+    )
+    limiter = Limiter(key_func=_rate_limit_key)

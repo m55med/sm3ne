@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { setToken } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +9,7 @@ import { Card } from "@/components/ui/card";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -29,9 +31,12 @@ export default function LoginPage() {
         return;
       }
       setToken(data.access_token);
-      window.location.href = "/dashboard";
+      router.replace("/dashboard");
     } catch (err) {
-      console.error("Login error:", err);
+      // طباعة الخطأ فقط في بيئة التطوير
+      if (process.env.NODE_ENV !== "production") {
+        console.error("Login error:", err);
+      }
       setError("فشل الاتصال بالسيرفر");
     } finally {
       setLoading(false);
@@ -46,8 +51,25 @@ export default function LoginPage() {
           <p className="text-gray-500 text-sm">لوحة التحكم</p>
         </div>
         <form onSubmit={handleLogin} className="space-y-4">
-          <Input placeholder="اسم المستخدم" value={username} onChange={(e) => setUsername(e.target.value)} required />
-          <Input placeholder="كلمة السر" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <Input
+            id="username"
+            name="username"
+            autoComplete="username"
+            placeholder="اسم المستخدم"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+          />
+          <Input
+            id="password"
+            name="password"
+            autoComplete="current-password"
+            placeholder="كلمة السر"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
           {error && <p className="text-red-500 text-sm">{error}</p>}
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? "جاري الدخول..." : "دخول"}

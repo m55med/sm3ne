@@ -67,28 +67,42 @@ async def create_key(
     plan = get_user_plan(db, user.id)
     allowed = plan.api_keys_allowed if plan and plan.api_keys_allowed is not None else 1
 
-    active_count = db.query(func.count(ApiKey.id)).filter(
-        ApiKey.user_id == user.id,
-        ApiKey.is_active == True,
-    ).scalar() or 0
-
-    if allowed >= 0 and active_count >= allowed:
-        raise HTTPException(409, f"Max API keys reached for your plan ({allowed})")
-
+    # F15: wrap the count + insert in a single transaction with row-level
+    # locking so two parallel POSTs from the same user can't both squeeze
+    # past the per-plan cap. The savepoint (begin_nested) gives us a clean
+    # retry/abort surface without committing the outer FastAPI-managed
+    # session prematurely; SELECT ... FOR UPDATE on the user's active rows
+    # serializes the check-then-insert critical section.
     plaintext, prefix, key_hash = generate_api_key()
+    try:
+        with db.begin_nested():
+            # Acquire row locks on the user's active API key rows; any
+            # concurrent transaction trying the same insert blocks here
+            # until ours commits/rolls back.
+            active_count = (
+                db.query(ApiKey)
+                .filter(ApiKey.user_id == user.id, ApiKey.is_active == True)
+                .with_for_update()
+                .count()
+            )
+            if allowed >= 0 and active_count >= allowed:
+                raise HTTPException(409, f"Max API keys reached for your plan ({allowed})")
 
-    api_key = ApiKey(
-        user_id=user.id,
-        name=body.name,
-        key_prefix=prefix,
-        key_hash=key_hash,
-        expires_at=body.expires_at,
-        requests_per_minute=None,  # users cannot set their own overrides
-        requests_per_day=None,
-        is_active=True,
-    )
-    db.add(api_key)
-    db.commit()
+            api_key = ApiKey(
+                user_id=user.id,
+                name=body.name,
+                key_prefix=prefix,
+                key_hash=key_hash,
+                expires_at=body.expires_at,
+                requests_per_minute=None,  # users cannot set their own overrides
+                requests_per_day=None,
+                is_active=True,
+            )
+            db.add(api_key)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     db.refresh(api_key)
 
     return ApiKeyCreateResponse(

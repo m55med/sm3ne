@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth.jwt import get_current_user
+from app.core.config import limiter
 from app.core.lifespan import generate_public_id
 from app.db.database import get_db
 from app.db.models import SupportTicket, TicketReply, User
@@ -53,11 +54,15 @@ async def list_my_tickets(
 
 
 @router.post("/tickets", response_model=TicketDetail)
+@limiter.limit("5/hour")
 async def create_ticket(
     body: TicketCreateRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # F25: 5 tickets/hour per principal cap stops spam-bots from filling the
+    # admin queue. Honest users hit this limit only in pathological cases.
     ticket = SupportTicket(
         public_id=generate_public_id(),
         user_id=user.id,
@@ -127,12 +132,16 @@ async def get_my_ticket(
 
 
 @router.post("/tickets/{public_id}/replies", response_model=TicketReplyItem)
+@limiter.limit("5/hour")
 async def reply_to_my_ticket(
     public_id: str,
     body: TicketReplyCreate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # F25: same 5/hour budget for replies. Bucket is per principal so a single
+    # very chatty thread doesn't break for the user once they've spent it.
     ticket = _load_ticket_for_user(db, public_id, user)
     if ticket.status == "closed":
         raise HTTPException(400, "Ticket is closed")

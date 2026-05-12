@@ -1,8 +1,11 @@
 "use client";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { clearToken } from "@/lib/api";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { Toaster } from "@/components/toaster";
 
 const navItems = [
   { href: "/dashboard", label: "الإحصائيات", icon: "📊" },
@@ -17,10 +20,9 @@ const navItems = [
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { isAuthenticated, loading } = useAuth();
-
-  // Don't apply admin layout to login page
-  if (pathname === "/login") return <>{children}</>;
+  const [logoutOpen, setLogoutOpen] = useState(false);
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" /></div>;
@@ -28,10 +30,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (!isAuthenticated) return null;
 
+  function doLogout() {
+    clearToken();
+    router.replace("/login");
+  }
+
   return (
     <div className="min-h-screen flex bg-gray-50">
-      {/* Sidebar */}
-      <aside className="w-64 bg-white border-l shadow-sm hidden md:flex flex-col">
+      {/* الشريط الجانبي — استخدمنا border-s (logical) بدلاً من border-l لدعم RTL */}
+      <aside className="w-64 bg-white border-s shadow-sm hidden md:flex flex-col">
         <div className="p-6 border-b">
           <Link href="/" className="text-2xl font-bold text-blue-600">بصوتك</Link>
           <p className="text-xs text-gray-400 mt-1">لوحة التحكم</p>
@@ -54,7 +61,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </nav>
         <div className="p-4 border-t">
           <button
-            onClick={() => { clearToken(); window.location.href = "/login"; }}
+            onClick={() => setLogoutOpen(true)}
             className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm text-red-600 hover:bg-red-50 w-full transition"
           >
             <span>🚪</span>
@@ -63,8 +70,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
       </aside>
 
-      {/* Main content */}
+      {/* المحتوى الرئيسي */}
       <main className="flex-1 p-6 overflow-auto">{children}</main>
+
+      {/* تأكيد تسجيل الخروج */}
+      <ConfirmDialog
+        open={logoutOpen}
+        onOpenChange={setLogoutOpen}
+        title="تسجيل الخروج؟"
+        description="هل تريد فعلاً تسجيل الخروج من لوحة التحكم؟"
+        confirmLabel="تسجيل الخروج"
+        destructive
+        onConfirm={doLogout}
+      />
+
+      {/* الإشعارات */}
+      <Toaster />
     </div>
   );
 }

@@ -1,12 +1,32 @@
-import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart';
+import 'dart:async';
 
+import 'package:path/path.dart';
+import 'package:sqflite/sqflite.dart';
+
+/// App-wide singleton wrapper around the local sqflite database.
+///
+/// Uses a `Completer<Database>` lock to guarantee a single concurrent
+/// `_init` call even when [instance] is awaited from multiple isolates of
+/// async code at the same time (e.g. the first frame + a deep-link DAO call).
 class LocalDatabase {
-  static Database? _db;
+  static Completer<Database>? _pending;
 
   static Future<Database> get instance async {
-    _db ??= await _init();
-    return _db!;
+    final existing = _pending;
+    if (existing != null) return existing.future;
+
+    final completer = Completer<Database>();
+    _pending = completer;
+    try {
+      final db = await _init();
+      completer.complete(db);
+      return db;
+    } catch (e, s) {
+      completer.completeError(e, s);
+      // Reset so a future call can retry init after a failure.
+      _pending = null;
+      rethrow;
+    }
   }
 
   static Future<Database> _init() async {

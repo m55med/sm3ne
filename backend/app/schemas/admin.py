@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, Field, field_validator
+from typing import Literal, Optional, List
 from datetime import datetime
 
 
@@ -36,8 +36,12 @@ class UserListResponse(BaseModel):
 
 class UserUpdateRequest(BaseModel):
     is_active: Optional[bool] = None
-    role: Optional[str] = None
-    full_name: Optional[str] = None
+    # F11: constrain role to a closed set so an admin can't mass-assign an
+    # arbitrary value (e.g. "superadmin") via the JSON body. Backend further
+    # checks at the route layer that an admin can't demote themselves nor
+    # disable another admin (F12).
+    role: Optional[Literal["user", "admin"]] = None
+    full_name: Optional[str] = Field(default=None, max_length=100)
     email: Optional[str] = None
 
 
@@ -169,11 +173,23 @@ class RequestListResponse(BaseModel):
 
 
 class CouponCreate(BaseModel):
-    code: str
+    # F13: tight pattern + auto-uppercase so lookups are case-insensitive.
+    # The DB column is unique, so casing collisions on user input would
+    # silently break — easier to canonicalize once at the schema boundary.
+    code: str = Field(min_length=4, max_length=50, pattern=r"^[A-Z0-9_-]+$")
     plan_id: int
-    duration_days: int = 30
-    max_uses: int = -1
+    duration_days: int = Field(default=30, ge=1, le=3650)
+    max_uses: int = Field(default=-1, ge=-1)
     expires_at: Optional[datetime] = None
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def _upper(cls, v):
+        # Normalize BEFORE the pattern check so a lowercase "promo10" becomes
+        # "PROMO10" and passes the [A-Z0-9_-] regex instead of being 422'd.
+        if isinstance(v, str):
+            return v.strip().upper()
+        return v
 
 
 class CouponResponse(BaseModel):
@@ -211,6 +227,8 @@ class PlanAdminItem(BaseModel):
     description: Optional[str] = None
     is_active: bool
     subscriber_count: int = 0
+    transcription_provider: Optional[str] = None
+    transcription_model: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -228,6 +246,8 @@ class PlanCreate(BaseModel):
     api_keys_allowed: int = 1
     description: Optional[str] = None
     is_active: bool = True
+    transcription_provider: Optional[str] = None
+    transcription_model: Optional[str] = None
 
 
 class PlanUpdate(BaseModel):
@@ -241,3 +261,5 @@ class PlanUpdate(BaseModel):
     api_keys_allowed: Optional[int] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
+    transcription_provider: Optional[str] = None
+    transcription_model: Optional[str] = None

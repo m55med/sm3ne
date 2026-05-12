@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:bisawtak/core/api/api_client.dart';
+import 'package:bisawtak/core/auth/auth_provider.dart';
+import 'package:bisawtak/shared/utils/error_messages.dart';
 
 class SurveyScreen extends ConsumerStatefulWidget {
   const SurveyScreen({super.key});
@@ -13,6 +15,7 @@ class SurveyScreen extends ConsumerStatefulWidget {
 class _SurveyScreenState extends ConsumerState<SurveyScreen> {
   final _selected = <String>{};
   final _otherCtrl = TextEditingController();
+  bool _saving = false;
 
   final _options = const [
     {'key': 'hearing_impaired', 'label': 'أعاني من ضعف السمع', 'icon': Icons.hearing_disabled},
@@ -23,14 +26,38 @@ class _SurveyScreenState extends ConsumerState<SurveyScreen> {
     {'key': 'other', 'label': 'أخرى', 'icon': Icons.more_horiz},
   ];
 
+  @override
+  void dispose() {
+    _otherCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _submit() async {
+    if (_saving || _selected.isEmpty) return;
+    setState(() => _saving = true);
     try {
       await ref.read(apiClientProvider).dio.post('/profile/survey', data: {
         'reasons': _selected.toList(),
-        if (_selected.contains('other')) 'other_text': _otherCtrl.text,
+        if (_selected.contains('other')) 'other_text': _otherCtrl.text.trim(),
       });
-    } catch (_) {}
-    if (mounted) context.go('/home');
+      // Pull fresh user (survey_response now set).
+      await ref.read(authProvider.notifier).checkAuth();
+      if (mounted) context.go('/home');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(friendlyErrorMessage(e)),
+          backgroundColor: Colors.red,
+          action: SnackBarAction(
+            label: 'إعادة',
+            textColor: Colors.white,
+            onPressed: _submit,
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -74,9 +101,11 @@ class _SurveyScreenState extends ConsumerState<SurveyScreen> {
                           ),
                           title: Text(opt['label'] as String),
                           trailing: selected ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary) : null,
-                          onTap: () => setState(() {
-                            selected ? _selected.remove(key) : _selected.add(key);
-                          }),
+                          onTap: _saving
+                              ? null
+                              : () => setState(() {
+                                    selected ? _selected.remove(key) : _selected.add(key);
+                                  }),
                         ),
                       );
                     }),
@@ -87,14 +116,21 @@ class _SurveyScreenState extends ConsumerState<SurveyScreen> {
                           controller: _otherCtrl,
                           decoration: const InputDecoration(labelText: 'حدد السبب...'),
                           maxLines: 2,
+                          enabled: !_saving,
                         ),
                       ),
                   ],
                 ),
               ),
               ElevatedButton(
-                onPressed: _selected.isNotEmpty ? _submit : null,
-                child: const Text('متابعة'),
+                onPressed: (_selected.isEmpty || _saving) ? null : _submit,
+                child: _saving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Text('متابعة'),
               ),
             ],
           ),

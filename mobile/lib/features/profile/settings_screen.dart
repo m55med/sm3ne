@@ -1,7 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bisawtak/core/auth/auth_provider.dart';
+import 'package:bisawtak/data/repositories/profile_repository.dart';
 import 'package:bisawtak/main.dart';
+import 'package:bisawtak/shared/utils/error_messages.dart';
+import 'package:bisawtak/shared/widgets/confirm_dialog.dart';
+
+final _appVersionProvider = FutureProvider<String>((ref) async {
+  try {
+    final info = await PackageInfo.fromPlatform();
+    return '${info.version} (${info.buildNumber})';
+  } catch (_) {
+    return '—';
+  }
+});
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -10,6 +25,7 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeModeProvider);
     final locale = ref.watch(localeProvider);
+    final versionAsync = ref.watch(_appVersionProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('الإعدادات')),
@@ -27,16 +43,51 @@ class SettingsScreen extends ConsumerWidget {
           ListTile(
             leading: const Icon(Icons.language),
             title: const Text('اللغة'),
-            subtitle: Text(locale?.languageCode == 'en' ? 'English' : locale?.languageCode == 'ar' ? 'العربية' : 'تلقائي (النظام)'),
+            subtitle: Text(_languageLabel(locale)),
             onTap: () => _showLanguageDialog(context, ref, locale),
           ),
           const Divider(height: 1),
-          // App info
-          const ListTile(
-            leading: Icon(Icons.info_outline),
-            title: Text('الإصدار'),
-            subtitle: Text('1.0.0'),
+          // Change password
+          ListTile(
+            leading: const Icon(Icons.lock_outline),
+            title: const Text('تغيير كلمة السر'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/forgot-password'),
           ),
+          const Divider(height: 1),
+          // About
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('عن التطبيق'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/about'),
+          ),
+          const Divider(height: 1),
+          // App version
+          ListTile(
+            leading: const Icon(Icons.tag),
+            title: const Text('الإصدار'),
+            subtitle: versionAsync.when(
+              data: (v) => Text(v),
+              loading: () => const Text('...'),
+              error: (_, __) => const Text('—'),
+            ),
+          ),
+          const Divider(height: 1),
+          // Logout
+          ListTile(
+            leading: const Icon(Icons.logout, color: Colors.red),
+            title: const Text('تسجيل الخروج', style: TextStyle(color: Colors.red)),
+            onTap: () => _confirmLogout(context, ref),
+          ),
+          const Divider(height: 1),
+          // Delete account (destructive)
+          ListTile(
+            leading: const Icon(Icons.delete_forever, color: Colors.red),
+            title: const Text('حذف الحساب نهائياً', style: TextStyle(color: Colors.red)),
+            onTap: () => _confirmDeleteAccount(context, ref),
+          ),
+          const SizedBox(height: 24),
         ],
       ),
     );
@@ -48,6 +99,11 @@ class SettingsScreen extends ConsumerWidget {
       case ThemeMode.light: return 'فاتح';
       default: return 'تلقائي (النظام)';
     }
+  }
+
+  String _languageLabel(Locale? locale) {
+    if (locale == null) return 'تلقائي (النظام)';
+    return locale.languageCode == 'en' ? 'English' : 'العربية';
   }
 
   void _showThemeDialog(BuildContext context, WidgetRef ref, ThemeMode current) {
@@ -76,6 +132,43 @@ class SettingsScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _confirmLogout(BuildContext context, WidgetRef ref) async {
+    final ok = await showConfirmDialog(
+      context,
+      title: 'تسجيل الخروج',
+      message: 'هل تريد تسجيل الخروج من حسابك؟',
+      confirmLabel: 'تسجيل الخروج',
+      destructive: true,
+    );
+    if (!ok) return;
+    await ref.read(authProvider.notifier).logout();
+    if (context.mounted) context.go('/login');
+  }
+
+  Future<void> _confirmDeleteAccount(BuildContext context, WidgetRef ref) async {
+    final ok = await showConfirmDialog(
+      context,
+      title: 'حذف الحساب نهائياً',
+      message: 'سيتم حذف حسابك وجميع بياناتك بشكل دائم ولا يمكن التراجع عن هذا الإجراء.',
+      confirmLabel: 'حذف الحساب',
+      destructive: true,
+    );
+    if (!ok || !context.mounted) return;
+
+    try {
+      // Soft-deletes the account server-side and clears local state via logout().
+      await ref.read(profileRepositoryProvider).deleteAccount(confirmation: 'true');
+      await ref.read(authProvider.notifier).logout();
+      if (context.mounted) context.go('/login');
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 }
 

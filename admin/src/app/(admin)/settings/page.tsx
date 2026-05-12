@@ -1,34 +1,58 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { api } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { RefreshButton } from "@/components/refresh-button";
+import { ErrorBoundary } from "@/components/error-boundary";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { toast } from "@/components/toaster";
+import { formatNumber, formatDateTime } from "@/lib/format";
 import type {
+  ProviderTestResult,
+  ProviderUsage,
   TranscriptionProvider,
+  TranscriptionProviderInfo,
   TranscriptionProviderSetting,
+  TranscriptionProviderUsageResponse,
 } from "@/lib/types";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
 export default function SettingsPage() {
   const [setting, setSetting] = useState<TranscriptionProviderSetting | null>(null);
+  const [usage, setUsage] = useState<ProviderUsage[]>([]);
   const [saving, setSaving] = useState<TranscriptionProvider | null>(null);
+  const [savingModel, setSavingModel] = useState<TranscriptionProvider | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [pending, setPending] = useState<TranscriptionProvider | null>(null);
 
   const load = useCallback(async () => {
-    const data = await api<TranscriptionProviderSetting>(
-      "/admin/settings/transcription-provider"
-    );
-    setSetting(data);
+    const [s, u] = await Promise.all([
+      api<TranscriptionProviderSetting>("/admin/settings/transcription-provider"),
+      api<TranscriptionProviderUsageResponse>(
+        "/admin/settings/transcription-provider/usage"
+      ),
+    ]);
+    setSetting(s);
+    setUsage(u.providers);
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  async function selectProvider(name: TranscriptionProvider) {
+  // Open a confirm dialog before switching — switching affects all in-flight
+  // and future jobs that don't pin a specific provider.
+  function requestSelectProvider(name: TranscriptionProvider) {
     if (!setting || setting.current === name || saving) return;
+    setPending(name);
+  }
+
+  async function applyProvider(name: TranscriptionProvider) {
+    if (!setting || setting.current === name) return;
     setSaving(name);
     setError(null);
     try {
@@ -41,10 +65,38 @@ export default function SettingsPage() {
       );
       setSetting(data);
       setSavedAt(Date.now());
+      toast.success(`تم تبديل المزوّد الافتراضي إلى ${labelFor(name)}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "حدث خطأ غير معروف");
+      const msg = e instanceof Error ? e.message : "حدث خطأ غير معروف";
+      setError(msg);
+      toast.error(`فشل التبديل: ${msg}`);
     } finally {
       setSaving(null);
+      setPending(null);
+    }
+  }
+
+  async function selectModel(name: TranscriptionProvider, modelId: string) {
+    if (!setting || savingModel) return;
+    setSavingModel(name);
+    setError(null);
+    try {
+      const data = await api<TranscriptionProviderSetting>(
+        "/admin/settings/transcription-provider/model",
+        {
+          method: "PUT",
+          body: JSON.stringify({ provider: name, model: modelId }),
+        }
+      );
+      setSetting(data);
+      setSavedAt(Date.now());
+      toast.success("تم حفظ النموذج");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "حدث خطأ غير معروف";
+      setError(msg);
+      toast.error(`فشل الحفظ: ${msg}`);
+    } finally {
+      setSavingModel(null);
     }
   }
 
@@ -57,9 +109,13 @@ export default function SettingsPage() {
   }
 
   const fallbackActive = setting.current !== setting.effective;
+  const usageByProvider: Record<string, ProviderUsage> = Object.fromEntries(
+    usage.map((u) => [u.provider, u])
+  );
 
   return (
-    <div>
+    <ErrorBoundary>
+      <div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">إعدادات النظام</h1>
@@ -73,9 +129,13 @@ export default function SettingsPage() {
       <Card className="p-6 mb-6">
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
-            <h2 className="text-lg font-bold text-gray-900">مزود التفريغ النصي</h2>
+            <h2 className="text-lg font-bold text-gray-900">مزود التفريغ النصي الافتراضي</h2>
             <p className="text-sm text-gray-500 mt-1">
-              الخدمة المُستخدَمة لتحويل الصوت إلى نص لكل المستخدمين
+              الخدمة المُستخدَمة للطلبات التي لا تُحدّد باقتها مزوّداً
+              صراحةً.{" "}
+              <a href="/plans" className="text-blue-600 underline">
+                تحديد مزوّد لباقة معيّنة من صفحة الباقات
+              </a>
             </p>
           </div>
           {savedAt && (
@@ -87,9 +147,8 @@ export default function SettingsPage() {
 
         {fallbackActive && (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            ⚠️ المُختار حالياً <b>{labelFor(setting.current)}</b> لكنه غير
-            مُعدّ، فالنظام يستخدم <b>{labelFor(setting.effective)}</b> كخيار
-            بديل حتى تضبط الإعدادات.
+            ⚠️ المُختار حالياً <b>{labelFor(setting.current)}</b> لكنه غير مُعدّ
+            — النظام يستخدم <b>{labelFor(setting.effective)}</b> كخيار بديل.
           </div>
         )}
 
@@ -99,58 +158,35 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {setting.providers.map((p) => {
-            const isCurrent = setting.current === p.name;
-            const isEffective = setting.effective === p.name;
-            const isSaving = saving === p.name;
-            const disabled = !p.available || isSaving || isCurrent;
-            return (
-              <button
-                key={p.name}
-                onClick={() => selectProvider(p.name)}
-                disabled={disabled}
-                className={`text-right rounded-xl border-2 p-4 transition ${
-                  isCurrent
-                    ? "border-blue-600 bg-blue-50"
-                    : p.available
-                      ? "border-gray-200 bg-white hover:border-blue-300"
-                      : "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-gray-900">{p.label}</span>
-                    {isCurrent && (
-                      <Badge className="bg-blue-600 text-white">المُحدّد</Badge>
-                    )}
-                    {!isCurrent && isEffective && (
-                      <Badge variant="secondary">قيد التشغيل</Badge>
-                    )}
-                  </div>
-                  <Badge
-                    variant={p.available ? "secondary" : "outline"}
-                    className={p.available ? "bg-green-100 text-green-700" : "text-gray-500"}
-                  >
-                    {p.available ? "جاهز" : "غير مُعدّ"}
-                  </Badge>
-                </div>
-                <p className="text-xs text-gray-600 leading-relaxed">
-                  {p.description}
-                </p>
-                {isSaving && (
-                  <div className="mt-2 text-xs text-blue-600">جاري التبديل…</div>
-                )}
-              </button>
-            );
-          })}
-        </div>
+        <fieldset
+          disabled={saving !== null}
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3"
+        >
+          {setting.providers.map((p) => (
+            <ProviderCard
+              key={p.name}
+              provider={p}
+              isCurrent={setting.current === p.name}
+              isEffective={setting.effective === p.name}
+              isSaving={saving === p.name}
+              isSavingModel={savingModel === p.name}
+              anySaving={saving !== null}
+              usage={usageByProvider[p.name]}
+              onSelect={() => requestSelectProvider(p.name)}
+              onSelectModel={(m) => selectModel(p.name, m)}
+              onError={setError}
+            />
+          ))}
+        </fieldset>
 
         {setting.updated_at && (
           <p className="text-xs text-gray-400 mt-4">
-            آخر تحديث: {new Date(setting.updated_at).toLocaleString("ar-EG")}
+            آخر تحديث للمزود: {formatDateTime(setting.updated_at)}
             {setting.updated_by_user_id != null && (
-              <> · بواسطة المستخدم #{setting.updated_by_user_id}</>
+              <>
+                {" "}· بواسطة المستخدم #
+                <span dir="ltr">{setting.updated_by_user_id}</span>
+              </>
             )}
           </p>
         )}
@@ -158,23 +194,273 @@ export default function SettingsPage() {
 
       <Card className="p-6">
         <h3 className="font-bold text-gray-900 mb-2">ملاحظات</h3>
-        <ul className="text-sm text-gray-600 space-y-1 list-disc pr-5">
-          <li>التبديل بين المزوّدين يأخذ تأثيره فوراً على الطلبات الجديدة.</li>
+        <ul className="text-sm text-gray-600 space-y-1 list-disc pe-5">
           <li>
-            Speechmatics يحتاج المتغيّر <code className="font-mono">SP</code> في
-            ملف <code className="font-mono">.env</code>؛ إذا كان فارغاً سيظهر
-            كـ &quot;غير مُعدّ&quot;.
+            <b>الافتراضي</b> أعلاه يطبَّق فقط لما الباقة لا تُحدّد مزوّداً
+            بنفسها — تقدر تحدّد مزوّداً مختلفاً لكل باقة من <a href="/plans" className="text-blue-600 underline">صفحة الباقات</a>.
           </li>
           <li>
-            تبديلك لمزود Whisper بعد بداية السيرفر يحمّل النموذج عند أول طلب
-            (قد يأخذ ثواني أوّل مرة).
+            <b>زر التجربة</b> يأخذ ملف صوتي صغير (mp3/wav/m4a) ويحاول التفريغ
+            بالمزوّد+الموديل المختار — لا يُسجَّل ضمن طلبات المستخدمين.
+          </li>
+          <li>
+            أرقام &quot;اليوم/الشهر/الإجمالي&quot; محسوبة من قاعدة بياناتنا
+            بناءً على عمود <code className="font-mono">provider_used</code>.
           </li>
         </ul>
       </Card>
+
+      <ConfirmDialog
+        open={pending !== null}
+        onOpenChange={(o) => {
+          if (!o) setPending(null);
+        }}
+        title="تأكيد تبديل المزوّد الافتراضي"
+        description={
+          pending ? (
+            <span>
+              سيتم تحويل كل الطلبات الجديدة (التي لا تُحدّد باقتها مزوّداً) إلى{" "}
+              <b>{labelFor(pending)}</b>. الطلبات الجارية حالياً قد تتأثر إذا
+              لم تنتهِ بعد. هل تريد المتابعة؟
+            </span>
+          ) : null
+        }
+        confirmLabel="نعم، بدّل الآن"
+        cancelLabel="إلغاء"
+        destructive
+        loading={saving !== null}
+        onConfirm={async () => {
+          if (pending) await applyProvider(pending);
+        }}
+      />
+      </div>
+    </ErrorBoundary>
+  );
+}
+
+function ProviderCard({
+  provider,
+  isCurrent,
+  isEffective,
+  isSaving,
+  isSavingModel,
+  anySaving,
+  usage,
+  onSelect,
+  onSelectModel,
+  onError,
+}: {
+  provider: TranscriptionProviderInfo;
+  isCurrent: boolean;
+  isEffective: boolean;
+  isSaving: boolean;
+  isSavingModel: boolean;
+  anySaving: boolean;
+  usage: ProviderUsage | undefined;
+  onSelect: () => void;
+  onSelectModel: (modelId: string) => void;
+  onError: (msg: string) => void;
+}) {
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<ProviderTestResult | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const effectiveModelId =
+    provider.selected_model || provider.default_model || provider.models[0]?.id;
+
+  async function runTest(file: File) {
+    setTesting(true);
+    setTestResult(null);
+    onError("");
+    try {
+      const form = new FormData();
+      form.append("provider", provider.name);
+      if (effectiveModelId) form.append("model", effectiveModelId);
+      form.append("file", file);
+
+      const token = localStorage.getItem("admin_token");
+      const res = await fetch(
+        `${API_BASE}/admin/settings/transcription-provider/test`,
+        {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          body: form,
+        }
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Error ${res.status}`);
+      }
+      const data = (await res.json()) as ProviderTestResult;
+      setTestResult(data);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "فشل الاختبار");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div
+      className={`text-right rounded-xl border-2 p-4 flex flex-col gap-3 ${
+        isCurrent
+          ? "border-blue-600 bg-blue-50"
+          : provider.available
+            ? "border-gray-200 bg-white"
+            : "border-gray-200 bg-gray-50 opacity-70"
+      }`}
+    >
+      <div>
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-gray-900">{provider.label}</span>
+            {isCurrent && <Badge className="bg-blue-600 text-white">المُحدّد</Badge>}
+            {!isCurrent && isEffective && (
+              <Badge variant="secondary">قيد التشغيل</Badge>
+            )}
+          </div>
+          <Badge
+            variant={provider.available ? "secondary" : "outline"}
+            className={
+              provider.available
+                ? "bg-green-100 text-green-700"
+                : "text-gray-500"
+            }
+          >
+            {provider.available ? "جاهز" : "غير مُعدّ"}
+          </Badge>
+        </div>
+        <p className="text-xs text-gray-600 leading-relaxed">
+          {provider.description}
+        </p>
+      </div>
+
+      {/* Sub-model dropdown */}
+      {provider.models.length > 0 && (
+        <div>
+          <label className="text-xs font-semibold text-gray-700 block mb-1">
+            النموذج
+          </label>
+          <select
+            value={effectiveModelId || ""}
+            onChange={(e) => onSelectModel(e.target.value)}
+            disabled={!provider.available || isSavingModel}
+            className="w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white disabled:bg-gray-100"
+          >
+            {provider.models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+          {isSavingModel && (
+            <div className="text-[10px] text-blue-600 mt-1">جاري الحفظ…</div>
+          )}
+        </div>
+      )}
+
+      {/* Usage block */}
+      {usage && (
+        <div className="border-t border-gray-200 pt-2 text-xs space-y-1">
+          {usage.free_tier_limit_text && (
+            <div className="text-gray-500">
+              <span className="font-semibold text-gray-700">Free tier: </span>
+              {usage.free_tier_limit_text}
+            </div>
+          )}
+          <div className="grid grid-cols-3 gap-1 mt-1">
+            <UsageStat label="اليوم" value={usage.local.requests_today} />
+            <UsageStat label="الشهر" value={usage.local.requests_month} />
+            <UsageStat label="إجمالي" value={usage.local.requests_total} />
+          </div>
+          <div className="text-gray-500">
+            مدّة معالجة الشهر:{" "}
+            <b>{formatSeconds(usage.local.seconds_month)}</b>
+          </div>
+          {usage.remote && (
+            <div className="text-emerald-700 bg-emerald-50 rounded px-2 py-1 mt-1">
+              من المزوّد: {usage.remote.total_hours_month} ساعة هذا الشهر
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="flex gap-2 mt-auto pt-2 border-t border-gray-200">
+        <Button
+          variant={isCurrent ? "secondary" : "default"}
+          size="sm"
+          onClick={onSelect}
+          disabled={!provider.available || anySaving || isCurrent}
+          className="flex-1"
+        >
+          {isSaving ? "جاري…" : isCurrent ? "نشط" : "اعتمده افتراضي"}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={!provider.available || testing}
+        >
+          {testing ? "اختبار…" : "اختبار"}
+        </Button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac,.webm,.mp4"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) runTest(f);
+            e.target.value = "";
+          }}
+        />
+      </div>
+
+      {/* Test result */}
+      {testResult && (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs">
+          <div className="flex justify-between mb-1 text-emerald-800 font-semibold">
+            <span>نجح الاختبار</span>
+            <span>{(testResult.duration_ms / 1000).toFixed(2)}s</span>
+          </div>
+          <div className="text-gray-600 mb-1">
+            صوت {testResult.audio_seconds}s · {testResult.word_count} كلمة ·{" "}
+            {testResult.language}
+          </div>
+          <div className="bg-white rounded p-2 max-h-24 overflow-y-auto text-gray-800 leading-relaxed">
+            {testResult.text || <span className="text-gray-400">(لا نص)</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UsageStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="bg-gray-50 rounded px-2 py-1 text-center">
+      <div className="text-[10px] text-gray-500">{label}</div>
+      <div className="font-bold text-gray-900" dir="ltr">
+        {formatNumber(value)}
+      </div>
     </div>
   );
 }
 
 function labelFor(name: TranscriptionProvider): string {
-  return name === "whisper" ? "Whisper (محلي)" : "Speechmatics";
+  const map: Record<TranscriptionProvider, string> = {
+    whisper: "Whisper (محلي)",
+    speechmatics: "Speechmatics",
+    gemini: "Gemini",
+    groq: "Groq",
+    assemblyai: "AssemblyAI",
+  };
+  return map[name] || name;
+}
+
+function formatSeconds(s: number): string {
+  if (s < 60) return `${s.toFixed(0)} ث`;
+  if (s < 3600) return `${(s / 60).toFixed(1)} د`;
+  return `${(s / 3600).toFixed(2)} س`;
 }

@@ -37,6 +37,13 @@ class HelpScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('المساعدة'),

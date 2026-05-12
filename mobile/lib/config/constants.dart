@@ -1,12 +1,39 @@
 class AppConstants {
   static const String appName = 'بصوتك';
   static const String appNameEn = 'Bisawtak';
-  static const String apiBaseUrl = 'https://voice.neojeen.com/api/v1';
+
+  // API base URL — overridable via --dart-define=API_URL=...
+  static const String apiBaseUrl = String.fromEnvironment(
+    'API_URL',
+    defaultValue: 'https://voice.neojeen.com/api/v1',
+  );
+
+  // Free plan limit (in seconds) for free users
   static const int freeMaxSeconds = 30;
 
-  // AdMob IDs (replace with real ones)
-  static const String adBannerAndroid = 'ca-app-pub-3940256099942544/6300978111';
-  static const String adBannerIos = 'ca-app-pub-3940256099942544/2934735716';
-  static const String adInterstitialAndroid = 'ca-app-pub-3940256099942544/1033173712';
-  static const String adInterstitialIos = 'ca-app-pub-3940256099942544/4411468910';
+  // Upload limits / allowed file types
+  static const int maxUploadBytes = 200 * 1024 * 1024; // 200 MB
+  static const Set<String> allowedAudioExtensions = {
+    'm4a', 'mp3', 'wav', 'ogg', 'opus', 'aac', 'flac', 'webm', 'mp4',
+  };
+
+  // AdMob IDs — Google's TEST IDs.
+  // TODO(release): replace with real ad-unit IDs before production release.
+  // For now, can be overridden via --dart-define=ADMOB_BANNER_ANDROID=...
+  static const String adBannerAndroid = String.fromEnvironment(
+    'ADMOB_BANNER_ANDROID',
+    defaultValue: 'ca-app-pub-3940256099942544/6300978111',
+  );
+  static const String adBannerIos = String.fromEnvironment(
+    'ADMOB_BANNER_IOS',
+    defaultValue: 'ca-app-pub-3940256099942544/2934735716',
+  );
+  static const String adInterstitialAndroid = String.fromEnvironment(
+    'ADMOB_INTERSTITIAL_ANDROID',
+    defaultValue: 'ca-app-pub-3940256099942544/1033173712',
+  );
+  static const String adInterstitialIos = String.fromEnvironment(
+    'ADMOB_INTERSTITIAL_IOS',
+    defaultValue: 'ca-app-pub-3940256099942544/4411468910',
+  );
 }

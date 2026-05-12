@@ -1,4 +1,7 @@
 export function Footer() {
+  // TODO: replace with a real, monitored support inbox once one is provisioned.
+  // The domain in use is voice.neojeen.com, so we route to neojeen for now.
+  const SUPPORT_EMAIL = "support@neojeen.com";
   return (
     <footer className="bg-gray-900 text-gray-400 py-12">
       <div className="max-w-6xl mx-auto px-6">
@@ -11,11 +14,11 @@ export function Footer() {
             <a href="#features" className="hover:text-white transition">المميزات</a>
             <a href="#plans" className="hover:text-white transition">الباقات</a>
             <a href="#faq" className="hover:text-white transition">الأسئلة</a>
-            <a href="mailto:m55med@icloud.com" className="hover:text-white transition">تواصل معنا</a>
+            <a href={`mailto:${SUPPORT_EMAIL}`} className="hover:text-white transition">تواصل معنا</a>
           </div>
         </div>
         <div className="border-t border-gray-800 mt-8 pt-8 text-center text-sm">
-          &copy; {new Date().getFullYear()} بصوتك — جميع الحقوق محفوظة
+          &copy; <span dir="ltr">{new Date().getFullYear()}</span> بصوتك — جميع الحقوق محفوظة
         </div>
       </div>
     </footer>

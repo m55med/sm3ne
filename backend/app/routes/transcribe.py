@@ -1,26 +1,151 @@
-import os
+"""Transcription route.
 
-from fastapi import APIRouter, Depends, Form, Request, UploadFile, File, HTTPException
+Heavy lifting (DB row creation, provider dispatch, cleanup) lives in
+``services.transcription_orchestrator`` — this module is intentionally thin
+so it's easy to audit security checks at a glance.
+
+Quota / limit notes:
+
+* ``is_live_recording`` is NO LONGER a blanket quota bypass (F6). Live recordings
+  count against their OWN daily counter, capped per plan tier. Both daily quota
+  and RPM apply.
+* File uploads are capped at ``MAX_UPLOAD_BYTES`` (F7) and validated by extension
+  AND magic bytes (F8) via ``services.file_validation``.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import tempfile
+from datetime import datetime, timedelta, timezone
+from typing import Literal
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from datetime import datetime, timezone
-
-from sqlalchemy import func
-
 from app.auth.deps import check_daily_quota, check_rpm_limit, get_user_or_api_key
-from app.core.config import ALLOWED_EXTENSIONS, RATE_LIMIT, limiter
+from app.core.config import RATE_LIMIT, limiter
 from app.db.database import get_db
-from app.db.models import User, TranscriptionRequest, UserSubscription
-from app.services import transcription_service
-from app.services.text_analyzer import build_response
-from app.services.audio_utils import probe_duration, trim_audio
-from app.services.subscription_service import get_active_subscription, get_user_plan
+from app.db.models import TranscriptionRequest, User
+from app.services.file_validation import validate_audio_upload
+from app.services.subscription_service import get_user_plan
+from app.services.transcription_orchestrator import run_transcription
+
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
-LIVE_RECORDING_MAX_SECONDS = 600  # 10 minutes — fixed cap, applies to all plans
+# F7: cap upload size (default 200 MB). Backend-1 will register MAX_UPLOAD_BYTES
+# in core.config; until then we read directly from the env so this works either
+# way without a deploy ordering hazard.
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(200 * 1024 * 1024)))
+_CHUNK = 1024 * 1024  # 1 MiB chunks while streaming the body to disk
+
+# F6: separate daily caps for live recordings. Live recording is allowed on
+# every tier but tracked independently from the upload counter so a heavy
+# uploader can still record voice notes (and vice versa).
+LIVE_CAP_FREE = 20
+LIVE_CAP_PAID = 200
+
+
+def _today_start_utc() -> datetime:
+    now = datetime.now(timezone.utc)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _live_cap_for_plan(plan) -> int:
+    """Resolve the daily live-recording cap. -1 = unlimited."""
+    if plan is None or plan.name == "free":
+        return LIVE_CAP_FREE
+    # Unlimited plans get unlimited live too.
+    if getattr(plan, "daily_request_limit", None) == -1:
+        return -1
+    return LIVE_CAP_PAID
+
+
+def _check_live_recording_quota(db: Session, user_id: int, plan) -> None:
+    cap = _live_cap_for_plan(plan)
+    if cap < 0:
+        return  # unlimited
+    today = _today_start_utc()
+    used = db.query(func.count(TranscriptionRequest.id)).filter(
+        TranscriptionRequest.user_id == user_id,
+        TranscriptionRequest.created_at >= today,
+        TranscriptionRequest.is_live_recording == True,  # noqa: E712
+        TranscriptionRequest.status != "failed",
+    ).scalar() or 0
+    if used >= cap:
+        resets_at = today + timedelta(days=1)
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "live_recording_quota_exceeded",
+                "limit": cap,
+                "used": used,
+                "resets_at_utc": resets_at.isoformat(),
+            },
+        )
+
+
+async def _stream_to_tmp(file: UploadFile, suffix: str) -> tuple[str, bytes, int]:
+    """Stream the upload to disk in 1 MiB chunks, capping at MAX_UPLOAD_BYTES.
+
+    Returns ``(tmp_path, first_chunk_bytes, total_size)``. The first-chunk bytes
+    are kept around so the route can run magic-byte validation without re-reading.
+    On overflow we clean up the partial tmp file and raise 413.
+    """
+    # Early bail: if the client advertised a Content-Length / size > limit,
+    # don't even start writing.
+    advertised = getattr(file, "size", None)
+    if advertised is not None and advertised > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail={"error": "file_too_large", "limit_bytes": MAX_UPLOAD_BYTES},
+        )
+
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    total = 0
+    first: bytes = b""
+    try:
+        with os.fdopen(fd, "wb") as out:
+            while True:
+                chunk = await file.read(_CHUNK)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    # Wipe partial file before raising so we don't leak disk.
+                    out.close()
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    raise HTTPException(
+                        status_code=413,
+                        detail={
+                            "error": "file_too_large",
+                            "limit_bytes": MAX_UPLOAD_BYTES,
+                        },
+                    )
+                if not first:
+                    first = chunk[:16]  # enough for every magic header we check
+                out.write(chunk)
+    except HTTPException:
+        raise
+    except Exception:
+        # On any other write error, clean up and re-raise as 500. Don't echo
+        # the raw exception — see F9 in transcription_orchestrator.
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        logger.exception("upload streaming failed")
+        raise HTTPException(500, "Upload failed. Please try again.")
+
+    return tmp_path, first, total
 
 
 @router.post("/transcribe")
@@ -28,114 +153,74 @@ LIVE_RECORDING_MAX_SECONDS = 600  # 10 minutes — fixed cap, applies to all pla
 async def transcribe(
     request: Request,
     file: UploadFile = File(...),
-    source: str = Form("upload"),
+    # F10: source is now a closed set — anything outside this Literal is
+    # rejected by FastAPI/Pydantic with 422 before our handler runs.
+    source: Literal["upload", "recording", "share", "api"] = Form("upload"),
     is_live_recording: bool = Form(False),
     user: User = Depends(get_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    # Live recordings bypass the daily quota by design — they're self-captured
-    # on the device and naturally rate-limited by the user. RPM still applies.
+    # F6: RPM applies to live recordings too — it's a per-minute hammer guard,
+    # not a daily quota. We then enforce ONE of the two daily counters:
+    # - live → _check_live_recording_quota (separate per-plan cap)
+    # - upload → check_daily_quota (the existing per-plan counter)
     check_rpm_limit(request, user, db)
-    if not is_live_recording:
+
+    plan = getattr(request.state, "plan", None) or get_user_plan(db, user.id)
+
+    if is_live_recording:
+        _check_live_recording_quota(db, user.id, plan)
+    else:
         check_daily_quota(request, user, db)
 
-    # Validate file type
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if not (file.content_type and file.content_type.startswith("audio")) and ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(400, "Unsupported file type. Send an audio file.")
+    # F8: validate extension + magic bytes BEFORE we commit to a full upload.
+    # We need at least the first chunk to run magic-byte detection, so we
+    # always stream-to-disk; the head bytes get sniffed once we have them.
+    suffix = os.path.splitext(file.filename or ".wav")[1] or ".wav"
+    tmp_path, head_bytes, _total = await _stream_to_tmp(file, suffix)
 
-    # Get user plan
-    plan = getattr(request.state, "plan", None) or get_user_plan(db, user.id)
-    # Live recordings get a fixed 10-min cap regardless of plan;
-    # regular uploads honor the plan's max_audio_seconds (-1 = unlimited).
-    if is_live_recording:
-        max_seconds = LIVE_RECORDING_MAX_SECONDS
-    else:
-        max_seconds = plan.max_audio_seconds if plan else 30
+    try:
+        validate_audio_upload(file.filename, file.content_type, head_bytes)
+    except HTTPException:
+        # Validation failed — drop the tmp file and rethrow.
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
-    # Save and optionally trim
-    import tempfile
-    suffix = os.path.splitext(file.filename or ".wav")[1]
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
-
-    was_trimmed = False
-    original_duration = probe_duration(tmp_path)
-    trimmed_path = None
-
-    # Create request row immediately with processing status so admin dashboard
-    # sees it in-flight (and failures get recorded, not silently dropped).
     api_key = getattr(request.state, "api_key", None)
 
-    # Snapshot the user's plan/subscription at request time — admin history must
-    # not drift when the user later upgrades/downgrades.
-    sub = get_active_subscription(db, user.id)
-    plan_source = "free"
-    if sub:
-        plan_source = "coupon" if sub.coupon_id else ("purchase" if plan and plan.name != "free" else "free")
-
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    daily_used = db.query(func.count(TranscriptionRequest.id)).filter(
-        TranscriptionRequest.user_id == user.id,
-        TranscriptionRequest.created_at >= today_start,
-        TranscriptionRequest.status != "failed",
-    ).scalar() or 0
-
-    resolved_source = source
+    # Resolve the source value we stamp on the row. The client may send
+    # `source="upload"` even when calling through an API key; we override
+    # so admin dashboards see "api" for those. Live recording always wins.
     if is_live_recording:
         resolved_source = "recording"
     elif api_key is not None and source == "upload":
         resolved_source = "api"
+    else:
+        resolved_source = source
 
-    req_log = TranscriptionRequest(
-        user_id=user.id,
-        api_key_id=api_key.id if api_key else None,
-        filename=file.filename,
-        duration_seconds=original_duration,
-        was_trimmed=False,
-        status="processing",
-        source=resolved_source,
-        is_live_recording=is_live_recording,
-        plan_name_at_request=plan.name if plan else "free",
-        plan_source_at_request=plan_source,
-        daily_limit_at_request=plan.daily_request_limit if plan else None,
-        monthly_limit_at_request=plan.monthly_request_limit if plan else None,
-        daily_used_at_request=daily_used,  # count BEFORE this request
-    )
-    db.add(req_log)
-    db.commit()
-    db.refresh(req_log)
-
+    # F28: orchestrator owns the heavy lifting. It also unlinks the tmp file
+    # on every code path so we don't double-unlink here.
     try:
-        if max_seconds > 0 and original_duration > max_seconds:
-            trimmed_path = trim_audio(tmp_path, max_seconds)
-            was_trimmed = True
-            process_path = trimmed_path
-        else:
-            process_path = tmp_path
+        response_data = await run_transcription(
+            db,
+            user_id=user.id,
+            api_key_id=api_key.id if api_key else None,
+            filename=file.filename,
+            tmp_path=tmp_path,
+            plan=plan,
+            is_live_recording=is_live_recording,
+            resolved_source=resolved_source,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        # F9: belt-and-suspenders generic error — orchestrator should already
+        # have mapped exceptions, but if anything slips through we never
+        # leak a stack trace.
+        logger.exception("transcribe route failed")
+        raise HTTPException(500, "Transcription failed. Please try again later.")
 
-        result = await transcription_service.transcribe_from_path(db, process_path)
-    except Exception as e:
-        req_log.status = "failed"
-        req_log.error_message = str(e)[:500]
-        db.commit()
-        raise HTTPException(500, f"Transcription failed: {str(e)}")
-    finally:
-        os.unlink(tmp_path)
-        if trimmed_path and os.path.exists(trimmed_path):
-            os.unlink(trimmed_path)
-
-    response_data = build_response(result)
-    response_data["was_trimmed"] = was_trimmed
-
-    req_log.processed_seconds = float(response_data.get("duration", 0))
-    req_log.language = str(response_data.get("lang", ""))
-    req_log.word_count = int(response_data.get("word_count", 0))
-    req_log.was_trimmed = was_trimmed
-    req_log.status = "completed"
-    db.commit()
-
-    response_data["request_id"] = req_log.id
     return JSONResponse(content=response_data)
