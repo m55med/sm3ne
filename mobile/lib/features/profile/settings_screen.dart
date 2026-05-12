@@ -159,7 +159,7 @@ class SettingsScreen extends ConsumerWidget {
 
     try {
       // Soft-deletes the account server-side and clears local state via logout().
-      await ref.read(profileRepositoryProvider).deleteAccount(confirmation: 'true');
+      await ref.read(profileRepositoryProvider).deleteAccount(confirmation: true);
       await ref.read(authProvider.notifier).logout();
       if (context.mounted) context.go('/login');
     } catch (e) {

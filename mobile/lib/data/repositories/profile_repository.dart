@@ -62,10 +62,11 @@ class ProfileRepository {
     }
   }
 
-  Future<void> deleteAccount({String? confirmation}) async {
+  Future<void> deleteAccount({String? password, bool confirmation = false}) async {
     try {
       await _dio.delete('/profile', data: {
-        if (confirmation != null) 'confirmation': confirmation,
+        if (password != null) 'password': password,
+        'confirmation': confirmation,
       });
     } catch (e) {
       throw ProfileException(friendlyErrorMessage(e),
