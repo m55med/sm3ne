@@ -16,6 +16,23 @@ RATE_LIMIT = os.getenv("RATE_LIMIT", "10/minute")
 MAX_WORKERS = int(os.getenv("WORKERS", "3"))
 ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm", ".mp4", ".aac", ".wma"}
 
+# Speechmatics (third-party ASR provider — much faster than local Whisper)
+SPEECHMATICS_API_KEY = os.getenv("SP", "").strip()
+SPEECHMATICS_BASE_URL = os.getenv(
+    "SPEECHMATICS_BASE_URL", "https://eu1.asr.api.speechmatics.com/v2"
+).strip().rstrip("/")
+SPEECHMATICS_LANGUAGE = os.getenv("SPEECHMATICS_LANGUAGE", "ar").strip()
+SPEECHMATICS_OPERATING_POINT = os.getenv("SPEECHMATICS_OPERATING_POINT", "enhanced").strip()
+SPEECHMATICS_POLL_INTERVAL = float(os.getenv("SPEECHMATICS_POLL_INTERVAL", "2.0"))
+SPEECHMATICS_TIMEOUT_SECONDS = int(os.getenv("SPEECHMATICS_TIMEOUT_SECONDS", "600"))
+
+# Provider selection: "speechmatics" or "whisper". Auto-picks speechmatics if SP token exists.
+_provider_env = os.getenv("TRANSCRIPTION_PROVIDER", "").strip().lower()
+if _provider_env in ("speechmatics", "whisper"):
+    TRANSCRIPTION_PROVIDER = _provider_env
+else:
+    TRANSCRIPTION_PROVIDER = "speechmatics" if SPEECHMATICS_API_KEY else "whisper"
+
 # Database
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://bisawtak:bisawtak_pass@postgres:5432/bisawtak")
 

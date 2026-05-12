@@ -69,13 +69,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
       }
 
       final dir = await getTemporaryDirectory();
-      final path = p.join(dir.path, 'rec_${DateTime.now().millisecondsSinceEpoch}.m4a');
+      // WAV (pcm16 with headers): guaranteed ffmpeg/Whisper compatibility.
+      // 16kHz mono matches Whisper's expected input — keeps files small.
+      final path = p.join(dir.path, 'rec_${DateTime.now().millisecondsSinceEpoch}.wav');
 
       await _recorder.start(
         const RecordConfig(
-          encoder: AudioEncoder.aacLc,
-          bitRate: 128000,
-          sampleRate: 44100,
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
         ),
         path: path,
       );

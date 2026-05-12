@@ -12,6 +12,7 @@ const navItems = [
   { href: "/subscriptions", label: "الاشتراكات", icon: "📜" },
   { href: "/coupons", label: "الكوبونات", icon: "🎟️" },
   { href: "/plans", label: "الباقات", icon: "💎" },
+  { href: "/settings", label: "الإعدادات", icon: "⚙️" },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

@@ -10,7 +10,7 @@ from app.core.config import executor, ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_EMAI
 from app.auth.password import hash_password
 from app.db.database import create_tables, SessionLocal
 from app.db.models import User, Plan
-from app.services import whisper_service
+from app.services import settings_service, whisper_service
 
 
 _PUBLIC_ID_ALPHABET = string.ascii_letters + string.digits
@@ -98,6 +98,14 @@ def _run_idempotent_ddl(db):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
         "CREATE INDEX IF NOT EXISTS idx_ticket_replies_ticket_created ON ticket_replies(ticket_id, created_at)",
+        """CREATE TABLE IF NOT EXISTS app_settings (
+            id SERIAL PRIMARY KEY,
+            key VARCHAR(80) UNIQUE NOT NULL,
+            value VARCHAR(255) NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_by_user_id INTEGER REFERENCES users(id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_app_settings_key ON app_settings(key)",
     ]
     for sql in statements:
         db.execute(text(sql))
@@ -205,6 +213,7 @@ def _seed_db():
         _run_idempotent_ddl(db)
         _backfill_user_public_ids(db)
         _backfill_request_plan_snapshots(db)
+        settings_service.seed_default_transcription_provider(db)
 
         if not db.query(Plan).first():
             db.add_all([
@@ -240,6 +249,18 @@ def _seed_db():
 async def lifespan(app: FastAPI):
     create_tables()
     _seed_db()
-    threading.Thread(target=whisper_service._ensure_model, daemon=True).start()
+    # Preload the local Whisper model only when it's the currently selected provider
+    # in the DB. Speechmatics is remote, so skipping the load saves ~3GB RAM and
+    # startup time. The setting is admin-controllable at runtime — if it later
+    # switches to whisper, the model will lazy-load on first transcription.
+    db = SessionLocal()
+    try:
+        active = settings_service.get_transcription_provider(db)
+    finally:
+        db.close()
+    if active == "whisper":
+        threading.Thread(target=whisper_service._ensure_model, daemon=True).start()
+    else:
+        print(f"Active transcription provider: {active} (Whisper preload skipped)")
     yield
     executor.shutdown(wait=False)

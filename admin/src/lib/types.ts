@@ -220,3 +220,20 @@ export interface PlanAdminItem {
 
 export type PlanCreateBody = Omit<PlanAdminItem, "id" | "subscriber_count">;
 export type PlanUpdateBody = Partial<Omit<PlanAdminItem, "id" | "name" | "subscriber_count">>;
+
+export type TranscriptionProvider = "whisper" | "speechmatics";
+
+export interface TranscriptionProviderInfo {
+  name: TranscriptionProvider;
+  label: string;
+  description: string;
+  available: boolean;
+}
+
+export interface TranscriptionProviderSetting {
+  current: TranscriptionProvider;
+  effective: TranscriptionProvider;
+  updated_at: string | null;
+  updated_by_user_id: number | null;
+  providers: TranscriptionProviderInfo[];
+}

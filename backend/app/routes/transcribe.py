@@ -12,7 +12,7 @@ from app.auth.deps import check_daily_quota, check_rpm_limit, get_user_or_api_ke
 from app.core.config import ALLOWED_EXTENSIONS, RATE_LIMIT, limiter
 from app.db.database import get_db
 from app.db.models import User, TranscriptionRequest, UserSubscription
-from app.services import whisper_service
+from app.services import transcription_service
 from app.services.text_analyzer import build_response
 from app.services.audio_utils import probe_duration, trim_audio
 from app.services.subscription_service import get_active_subscription, get_user_plan
@@ -116,7 +116,7 @@ async def transcribe(
         else:
             process_path = tmp_path
 
-        result = await whisper_service.transcribe_from_path(process_path)
+        result = await transcription_service.transcribe_from_path(db, process_path)
     except Exception as e:
         req_log.status = "failed"
         req_log.error_message = str(e)[:500]

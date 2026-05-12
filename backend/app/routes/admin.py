@@ -7,7 +7,7 @@ from sqlalchemy import func
 
 from app.auth.api_key import generate_api_key
 from app.db.database import get_db
-from app.db.models import ApiKey, Coupon, LoginEvent, Plan, SupportTicket, TicketReply, TranscriptionRequest, User, UserSubscription
+from app.db.models import ApiKey, AppSetting, Coupon, LoginEvent, Plan, SupportTicket, TicketReply, TranscriptionRequest, User, UserSubscription
 from app.auth.jwt import get_current_admin
 from app.schemas.admin import (
     AdminStatsResponse, UserListResponse, UserListItem, UserUpdateRequest,
@@ -27,7 +27,11 @@ from app.schemas.api_keys import (
     AdminApiKeyCreateRequest, AdminApiKeyListItem, AdminApiKeyListResponse,
     ApiKeyCreateResponse, ApiKeyResponse, ApiKeyUpdateRequest,
 )
+from app.schemas.settings import (
+    ProviderInfo, TranscriptionProviderResponse, TranscriptionProviderUpdateRequest,
+)
 from app.services.subscription_service import get_user_plan, subscribe_user
+from app.services import settings_service, transcription_service
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -1035,3 +1039,73 @@ async def admin_delete_key(
     api_key.is_active = False
     db.commit()
     return {"message": "API key deactivated"}
+
+
+# --- Settings: transcription provider ----------------------------------------
+
+_PROVIDER_META = {
+    "whisper": {
+        "label": "Whisper (محلي)",
+        "description": "نموذج Whisper يعمل داخل السيرفر — جودة عالية لكن أبطأ ويستهلك موارد كبيرة.",
+    },
+    "speechmatics": {
+        "label": "Speechmatics (خارجي)",
+        "description": "خدمة سحابية سريعة — تتطلب مفتاح SP في متغيرات البيئة.",
+    },
+}
+
+
+def _build_provider_response(db: Session) -> TranscriptionProviderResponse:
+    current = settings_service.get_transcription_provider(db)
+    effective = transcription_service.resolve_provider(db)
+    availability = transcription_service.provider_availability()
+
+    row = db.query(AppSetting).filter(
+        AppSetting.key == settings_service.KEY_TRANSCRIPTION_PROVIDER
+    ).first()
+
+    providers = [
+        ProviderInfo(
+            name=name,
+            label=_PROVIDER_META[name]["label"],
+            description=_PROVIDER_META[name]["description"],
+            available=availability.get(name, False),
+        )
+        for name in settings_service.VALID_PROVIDERS
+    ]
+
+    return TranscriptionProviderResponse(
+        current=current,
+        effective=effective,
+        updated_at=row.updated_at if row else None,
+        updated_by_user_id=row.updated_by_user_id if row else None,
+        providers=providers,
+    )
+
+
+@router.get("/settings/transcription-provider", response_model=TranscriptionProviderResponse)
+async def get_transcription_provider_setting(
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    return _build_provider_response(db)
+
+
+@router.put("/settings/transcription-provider", response_model=TranscriptionProviderResponse)
+async def update_transcription_provider_setting(
+    body: TranscriptionProviderUpdateRequest,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    availability = transcription_service.provider_availability()
+    if not availability.get(body.provider, False):
+        raise HTTPException(
+            400,
+            f"Provider '{body.provider}' is not configured on this server. "
+            f"Configure it first, then switch."
+        )
+    try:
+        settings_service.set_transcription_provider(db, body.provider, user_id=admin.id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _build_provider_response(db)

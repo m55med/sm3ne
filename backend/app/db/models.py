@@ -205,3 +205,18 @@ class LoginEvent(Base):
     device_os_version = Column(String(64), nullable=True)
     app_version = Column(String(32), nullable=True)
     created_at = Column(DateTime, default=utcnow, index=True)
+
+
+class AppSetting(Base):
+    """Generic key-value store for runtime-tunable app settings (admin dashboard).
+
+    Used for cross-cutting toggles that should not require a deploy — currently
+    just `transcription_provider`, but designed to grow.
+    """
+    __tablename__ = "app_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String(80), unique=True, nullable=False, index=True)
+    value = Column(String(255), nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)

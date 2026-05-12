@@ -1,0 +1,193 @@
+[
+  {
+    "lang": "ar",
+    "lang_name": "Arabic",
+    "text": "ولا اهمك يا هندسة معدنا بكرة الساعة 5 ولكن لو حصل لك ظرف أو ستتأخر ابعثني لأنني أتركي الساعة 6",
+    "char_count": 94,
+    "char_count_no_spaces": 75,
+    "word_count": 20,
+    "segment_count": 6,
+    "segments": [
+      {
+        "id": 0,
+        "start": 0,
+        "end": 1.72,
+        "text": "ولا اهمك يا هندسة",
+        "words": [
+          {
+            "word": "ولا",
+            "start": 0,
+            "end": 0.84,
+            "probability": 0.1233
+          },
+          {
+            "word": "اهمك",
+            "start": 0.84,
+            "end": 1.22,
+            "probability": 0.7279
+          },
+          {
+            "word": "يا",
+            "start": 1.22,
+            "end": 1.28,
+            "probability": 0.8574
+          },
+          {
+            "word": "هندسة",
+            "start": 1.28,
+            "end": 1.72,
+            "probability": 0.9632
+          }
+        ]
+      },
+      {
+        "id": 1,
+        "start": 1.72,
+        "end": 3.06,
+        "text": "معدنا بكرة الساعة 5",
+        "words": [
+          {
+            "word": "معدنا",
+            "start": 1.72,
+            "end": 2.38,
+            "probability": 0.4414
+          },
+          {
+            "word": "بكرة",
+            "start": 2.38,
+            "end": 2.64,
+            "probability": 0.7995
+          },
+          {
+            "word": "الساعة",
+            "start": 2.64,
+            "end": 2.88,
+            "probability": 0.882
+          },
+          {
+            "word": "5",
+            "start": 2.88,
+            "end": 3.06,
+            "probability": 0.618
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "start": 4,
+        "end": 4.02,
+        "text": "ولكن",
+        "words": [
+          {
+            "word": "ولكن",
+            "start": 3.63,
+            "end": 4.02,
+            "probability": 0.1136
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "start": 5.98,
+        "end": 7.98,
+        "text": "لو حصل لك ظرف",
+        "words": [
+          {
+            "word": "لو",
+            "start": 5.98,
+            "end": 6.76,
+            "probability": 0.379
+          },
+          {
+            "word": "حصل",
+            "start": 6.76,
+            "end": 7.54,
+            "probability": 0.5779
+          },
+          {
+            "word": "لك",
+            "start": 7.54,
+            "end": 7.72,
+            "probability": 0.8846
+          },
+          {
+            "word": "ظرف",
+            "start": 7.72,
+            "end": 7.98,
+            "probability": 0.8412
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "start": 7.98,
+        "end": 8.8,
+        "text": "أو ستتأخر",
+        "words": [
+          {
+            "word": "أو",
+            "start": 7.98,
+            "end": 8.18,
+            "probability": 0.3346
+          },
+          {
+            "word": "ستتأخر",
+            "start": 8.18,
+            "end": 8.8,
+            "probability": 0.8547
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "start": 8.8,
+        "end": 10.76,
+        "text": "ابعثني لأنني أتركي الساعة 6",
+        "words": [
+          {
+            "word": "ابعثني",
+            "start": 8.8,
+            "end": 9.34,
+            "probability": 0.5639
+          },
+          {
+            "word": "لأنني",
+            "start": 9.34,
+            "end": 9.74,
+            "probability": 0.6685
+          },
+          {
+            "word": "أتركي",
+            "start": 9.74,
+            "end": 10.28,
+            "probability": 0.1873
+          },
+          {
+            "word": "الساعة",
+            "start": 10.28,
+            "end": 10.58,
+            "probability": 0.7217
+          },
+          {
+            "word": "6",
+            "start": 10.58,
+            "end": 10.76,
+            "probability": 0.9119
+          }
+        ]
+      }
+    ],
+    "duration": 10.76,
+    "punctuation_count": {
+      "comma": 0,
+      "period": 0,
+      "question_mark": 0,
+      "exclamation_mark": 0,
+      "semicolon": 0,
+      "colon": 0,
+      "ellipsis": 0
+    },
+    "was_trimmed": false,
+    "request_id": 37
+  }
+]
