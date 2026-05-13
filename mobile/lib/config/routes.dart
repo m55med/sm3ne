@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/api/api_client.dart';
 import 'package:bisawtak/features/auth/forgot_password_screen.dart';
 import 'package:bisawtak/features/auth/login_screen.dart';
@@ -17,6 +19,7 @@ import 'package:bisawtak/features/profile/edit_profile_screen.dart';
 import 'package:bisawtak/features/profile/help_screen.dart';
 import 'package:bisawtak/features/profile/profile_screen.dart';
 import 'package:bisawtak/features/profile/settings_screen.dart';
+import 'package:bisawtak/features/profile/telegram_link_screen.dart';
 import 'package:bisawtak/features/splash/splash_screen.dart';
 import 'package:bisawtak/features/support/contact_screen.dart';
 import 'package:bisawtak/features/support/ticket_detail_screen.dart';
@@ -39,46 +42,143 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(path: '/', redirect: (_, __) => '/splash'),
       GoRoute(path: '/splash', builder: (_, __) => const SplashScreen()),
-      GoRoute(path: '/onboarding', builder: (_, __) => const OnboardingScreen()),
-      GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
-      GoRoute(path: '/register', builder: (_, __) => const RegisterScreen()),
-      GoRoute(path: '/forgot-password', builder: (_, __) => const ForgotPasswordScreen()),
-      GoRoute(path: '/survey', builder: (_, __) => const SurveyScreen()),
+      GoRoute(
+        path: '/onboarding',
+        pageBuilder: (_, state) =>
+            _fadePage(state, const OnboardingScreen()),
+      ),
+      GoRoute(
+        path: '/login',
+        pageBuilder: (_, state) => _fadePage(state, const LoginScreen()),
+      ),
+      GoRoute(
+        path: '/register',
+        pageBuilder: (_, state) => _fadePage(state, const RegisterScreen()),
+      ),
+      GoRoute(
+        path: '/forgot-password',
+        pageBuilder: (_, state) =>
+            _fadePage(state, const ForgotPasswordScreen()),
+      ),
+      GoRoute(
+        path: '/survey',
+        pageBuilder: (_, state) => _fadePage(state, const SurveyScreen()),
+      ),
       ShellRoute(
-        builder: (context, state, child) => _MainShell(state: state, child: child),
+        builder: (context, state, child) =>
+            _MainShell(state: state, child: child),
         routes: [
           GoRoute(path: '/home', builder: (_, __) => const HomeScreen()),
-          GoRoute(path: '/transcriptions', builder: (_, __) => const TranscriptionListScreen()),
+          GoRoute(
+              path: '/transcriptions',
+              builder: (_, __) => const TranscriptionListScreen()),
           GoRoute(path: '/plans', builder: (_, __) => const PlansScreen()),
           GoRoute(path: '/profile', builder: (_, __) => const ProfileScreen()),
         ],
       ),
       GoRoute(
         path: '/transcription/:id',
-        builder: (_, state) => TranscriptionResultScreen(
-          transcriptionId: int.parse(state.pathParameters['id']!),
+        pageBuilder: (_, state) => _slideUpPage(
+          state,
+          TranscriptionResultScreen(
+            transcriptionId: int.parse(state.pathParameters['id']!),
+          ),
         ),
       ),
-      GoRoute(path: '/settings', builder: (_, __) => const SettingsScreen()),
-      GoRoute(path: '/profile/edit', builder: (_, __) => const EditProfileScreen()),
-      GoRoute(path: '/help', builder: (_, __) => const HelpScreen()),
-      GoRoute(path: '/about', builder: (_, __) => const AboutScreen()),
-      GoRoute(path: '/account/delete', builder: (_, __) => const DeleteAccountScreen()),
-      GoRoute(path: '/contact', builder: (_, __) => const ContactScreen()),
+      GoRoute(
+        path: '/settings',
+        pageBuilder: (_, state) => _slideUpPage(state, const SettingsScreen()),
+      ),
+      GoRoute(
+        path: '/telegram',
+        pageBuilder: (_, state) =>
+            _slideUpPage(state, const TelegramLinkScreen()),
+      ),
+      GoRoute(
+        path: '/profile/edit',
+        pageBuilder: (_, state) =>
+            _slideUpPage(state, const EditProfileScreen()),
+      ),
+      GoRoute(
+        path: '/help',
+        pageBuilder: (_, state) => _slideUpPage(state, const HelpScreen()),
+      ),
+      GoRoute(
+        path: '/about',
+        pageBuilder: (_, state) => _slideUpPage(state, const AboutScreen()),
+      ),
+      GoRoute(
+        path: '/account/delete',
+        pageBuilder: (_, state) =>
+            _slideUpPage(state, const DeleteAccountScreen()),
+      ),
+      GoRoute(
+        path: '/contact',
+        pageBuilder: (_, state) => _slideUpPage(state, const ContactScreen()),
+      ),
       GoRoute(
         path: '/contact/:id',
-        builder: (_, state) => TicketDetailScreen(publicId: state.pathParameters['id']!),
+        pageBuilder: (_, state) => _slideUpPage(
+          state,
+          TicketDetailScreen(publicId: state.pathParameters['id']!),
+        ),
       ),
     ],
   );
 
   // Push users to /login whenever the API client signals a global 401.
+  // Set a flag so LoginScreen can explain why they were bounced back —
+  // otherwise the silent redirect feels broken.
   ref.listen(authInvalidationProvider, (_, __) {
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setBool(kExpiredSessionFlag, true);
+    });
     router.go('/login');
   });
 
   return router;
 });
+
+/// Smooth fade transition — used for auth/onboarding/full-screen swaps
+/// where slide motion would feel jarring.
+CustomTransitionPage<T> _fadePage<T>(GoRouterState state, Widget child) {
+  return CustomTransitionPage<T>(
+    key: state.pageKey,
+    child: child,
+    transitionDuration: AppDuration.base,
+    reverseTransitionDuration: AppDuration.fast,
+    transitionsBuilder: (_, animation, __, child) {
+      return FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeInOut),
+        child: child,
+      );
+    },
+  );
+}
+
+/// Slide-up + fade transition for detail/destination screens.
+/// The slight upward movement gives a sense of depth without feeling slow.
+CustomTransitionPage<T> _slideUpPage<T>(GoRouterState state, Widget child) {
+  return CustomTransitionPage<T>(
+    key: state.pageKey,
+    child: child,
+    transitionDuration: AppDuration.base,
+    reverseTransitionDuration: AppDuration.fast,
+    transitionsBuilder: (_, animation, __, child) {
+      final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+      return FadeTransition(
+        opacity: curved,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.04),
+            end: Offset.zero,
+          ).animate(curved),
+          child: child,
+        ),
+      );
+    },
+  );
+}
 
 /// Strict scheme whitelist for "open with" intents.
 const _kAllowedSchemes = <String>{'file', 'content', ''};

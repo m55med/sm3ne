@@ -1,3 +1,5 @@
+import 'package:sqflite/sqflite.dart';
+
 import 'package:bisawtak/data/local/database.dart';
 import 'package:bisawtak/data/models/transcription.dart';
 
@@ -5,6 +7,23 @@ class TranscriptionDao {
   Future<int> insert(Transcription t) async {
     final db = await LocalDatabase.instance;
     return db.insert('transcriptions', t.toMap());
+  }
+
+  /// Re-inserts a previously-deleted [Transcription] preserving its
+  /// original row id. Used by the Undo action on the result screen so the
+  /// restored row keeps its identity (matters for callers that already hold
+  /// the id, e.g. open detail screens, deep links).
+  Future<int> insertWithId(Transcription t) async {
+    if (t.id == null) {
+      return insert(t);
+    }
+    final db = await LocalDatabase.instance;
+    final map = t.toMap()..['id'] = t.id;
+    return db.insert(
+      'transcriptions',
+      map,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   Future<List<Transcription>> getAll() async {

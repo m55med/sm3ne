@@ -23,7 +23,9 @@ class ShareViewController: UIViewController {
                    attachment.hasItemConformingToTypeIdentifier("public.audio") ||
                    attachment.hasItemConformingToTypeIdentifier("com.apple.m4a-audio") ||
                    attachment.hasItemConformingToTypeIdentifier("public.mp3") ||
-                   attachment.hasItemConformingToTypeIdentifier("org.xiph.ogg") {
+                   attachment.hasItemConformingToTypeIdentifier("public.mpeg-4-audio") ||
+                   attachment.hasItemConformingToTypeIdentifier("org.xiph.ogg") ||
+                   attachment.hasItemConformingToTypeIdentifier("org.xiph.opus") {
                     attachment.loadItem(forTypeIdentifier: UTType.audio.identifier, options: nil) { [weak self] (data, error) in
                         guard error == nil else {
                             self?.close()
@@ -35,15 +37,30 @@ class ShareViewController: UIViewController {
                     }
                     return
                 }
-                // Also handle file URLs
+                // Voice notes wrapped in a movie container (Messenger, iOS-recorded m4a/mp4).
+                if attachment.hasItemConformingToTypeIdentifier(UTType.movie.identifier) ||
+                   attachment.hasItemConformingToTypeIdentifier("public.mpeg-4") {
+                    attachment.loadItem(forTypeIdentifier: UTType.movie.identifier, options: nil) { [weak self] (data, error) in
+                        guard error == nil, let url = data as? URL else {
+                            self?.close()
+                            return
+                        }
+                        if Self.audioExtensions.contains(url.pathExtension.lowercased()) {
+                            self?.saveAndRedirect(url: url)
+                        } else {
+                            self?.close()
+                        }
+                    }
+                    return
+                }
+                // Generic file URL — pick it up if the extension is one we accept.
                 if attachment.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                     attachment.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { [weak self] (data, error) in
                         guard error == nil, let url = data as? URL else {
                             self?.close()
                             return
                         }
-                        let audioExtensions = ["mp3", "m4a", "wav", "ogg", "flac", "aac", "wma", "opus"]
-                        if audioExtensions.contains(url.pathExtension.lowercased()) {
+                        if Self.audioExtensions.contains(url.pathExtension.lowercased()) {
                             self?.saveAndRedirect(url: url)
                         } else {
                             self?.close()
@@ -55,6 +72,11 @@ class ShareViewController: UIViewController {
         }
         close()
     }
+
+    private static let audioExtensions: Set<String> = [
+        "mp3", "m4a", "wav", "ogg", "flac", "aac", "wma", "opus",
+        "mp4", "webm", "3gp", "3gpp",
+    ]
 
     private func saveAndRedirect(url: URL) {
         // Copy to shared App Group container

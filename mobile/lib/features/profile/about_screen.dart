@@ -84,7 +84,7 @@ class _AboutScreenState extends State<AboutScreen> {
           Center(
             child: Text(
               'الإصدار $_version',
-              style: TextStyle(color: Colors.grey.shade600),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           ),
           const SizedBox(height: 24),
@@ -93,10 +93,10 @@ class _AboutScreenState extends State<AboutScreen> {
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Text(
-                'بصوتك تطبيق ذكي لتحويل الصوت إلى نص بدقة عالية وبدعم أكثر من 30 لغة. '
-                'سواء كنت بتحتاج تدوّن محاضرة، تحول رسالة صوتية، أو تفرّغ اجتماع — '
-                'بصوتك بيوفّر لك الأداة اللي محتاجها بسرعة وخصوصية.',
-                style: TextStyle(height: 1.6, color: Colors.grey.shade800),
+                'بصوتك تطبيق ذكي لتحويل الصوت إلى نص بدقة عالية مع دعم أكثر من 30 لغة. '
+                'سواء كنت تحتاج لتدوين محاضرة، تحويل رسالة صوتية، أو تفريغ اجتماع — '
+                'بصوتك يوفّر لك الأداة المناسبة بسرعة وخصوصية.',
+                style: TextStyle(height: 1.6, color: Theme.of(context).colorScheme.onSurface),
               ),
             ),
           ),
@@ -156,7 +156,7 @@ class _AboutScreenState extends State<AboutScreen> {
           Center(
             child: Text(
               '© ${DateTime.now().year} ${AppConstants.appName}',
-              style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
             ),
           ),
           const SizedBox(height: 16),
@@ -178,7 +178,7 @@ class _SectionTitle extends StatelessWidget {
         title,
         style: TextStyle(
           fontSize: 13,
-          color: Colors.grey.shade600,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.3,
         ),

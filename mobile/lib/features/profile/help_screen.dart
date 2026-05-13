@@ -64,8 +64,8 @@ class HelpScreen extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'هتلاقي هنا إجابات للأسئلة الشائعة. لو مالقيتش اللي بتدور عليه، تقدر تبعتلنا رسالة.',
-                    style: TextStyle(color: Colors.grey.shade800),
+                    'ستجد هنا إجابات للأسئلة الشائعة. إذا لم تجد ما تبحث عنه، يمكنك مراسلتنا مباشرة.',
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
                   ),
                 ),
               ],
@@ -98,6 +98,7 @@ class _FaqCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ExpansionTile(
@@ -105,10 +106,10 @@ class _FaqCard extends StatelessWidget {
         title: Text(item.q, style: const TextStyle(fontWeight: FontWeight.w600)),
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            padding: const EdgeInsetsDirectional.fromSTEB(16, 0, 16, 16),
             child: Align(
-              alignment: Alignment.centerRight,
-              child: Text(item.a, style: TextStyle(color: Colors.grey.shade700, height: 1.5)),
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(item.a, style: TextStyle(color: scheme.onSurfaceVariant, height: 1.5)),
             ),
           ),
         ],

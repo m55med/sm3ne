@@ -10,9 +10,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/data/repositories/transcription_repository.dart';
 import 'package:bisawtak/data/models/transcription.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
+import 'package:bisawtak/shared/utils/haptics.dart';
 import 'package:bisawtak/shared/widgets/confirm_dialog.dart';
 import 'package:bisawtak/shared/widgets/connectivity_banner.dart';
 
@@ -23,7 +25,8 @@ class HomeScreen extends ConsumerStatefulWidget {
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProviderStateMixin {
+class _HomeScreenState extends ConsumerState<HomeScreen>
+    with SingleTickerProviderStateMixin {
   static const Duration _maxDuration = Duration(minutes: 10);
 
   final AudioRecorder _recorder = AudioRecorder();
@@ -73,8 +76,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
   }
 
   Future<bool> _ensureMicPermission() async {
-    // Differentiate denied vs permanently-denied so we can route the user
-    // to system settings when the OS won't show the prompt anymore.
     var status = await Permission.microphone.status;
     if (status.isGranted) return true;
     if (status.isPermanentlyDenied) {
@@ -82,7 +83,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
       final open = await showConfirmDialog(
         context,
         title: 'إذن الميكروفون مطلوب',
-        message: 'لتسجيل الصوت برجاء السماح بالوصول للميكروفون من إعدادات التطبيق.',
+        message: 'لتسجيل الصوت يرجى السماح بالوصول للميكروفون من إعدادات التطبيق.',
         confirmLabel: 'افتح الإعدادات',
         cancelLabel: 'إلغاء',
       );
@@ -95,7 +96,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
       final open = await showConfirmDialog(
         context,
         title: 'إذن الميكروفون مطلوب',
-        message: 'لتسجيل الصوت برجاء السماح بالوصول للميكروفون من إعدادات التطبيق.',
+        message: 'لتسجيل الصوت يرجى السماح بالوصول للميكروفون من إعدادات التطبيق.',
         confirmLabel: 'افتح الإعدادات',
         cancelLabel: 'إلغاء',
       );
@@ -118,7 +119,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
       final dir = await getTemporaryDirectory();
       // WAV (pcm16 with headers): guaranteed ffmpeg/Whisper compatibility.
       // 16kHz mono matches Whisper's expected input — keeps files small.
-      final path = p.join(dir.path, 'rec_${DateTime.now().millisecondsSinceEpoch}.wav');
+      final path = p.join(
+        dir.path,
+        'rec_${DateTime.now().millisecondsSinceEpoch}.wav',
+      );
 
       await _recorder.start(
         const RecordConfig(
@@ -143,19 +147,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
         final elapsed = now.difference(_recordingStartedAt ?? now);
         setState(() => _elapsed = elapsed);
         if (elapsed >= _maxDuration) {
-          // Cancel the timer here to prevent repeated _stopAndSend invocations
-          // before the state flips.
           t.cancel();
           _ticker = null;
           _stopAndSend();
         }
       });
 
-      HapticFeedback.mediumImpact();
+      Haptics.success();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشل بدء التسجيل: ${friendlyErrorMessage(e)}')),
+          SnackBar(
+            content: Text('فشل بدء التسجيل: ${friendlyErrorMessage(e)}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
         );
       }
     }
@@ -171,10 +176,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
     recordedPath ??= _currentRecordingPath;
 
     setState(() => _isRecording = false);
-    HapticFeedback.mediumImpact();
+    Haptics.success();
 
     if (recordedPath == null) return;
-    // If the recording is too short, just discard it.
     if (_elapsed.inMilliseconds < 800) {
       _safeDelete(recordedPath);
       if (mounted) {
@@ -197,6 +201,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
     final path = _currentRecordingPath;
     if (path != null) _safeDelete(path);
     setState(() => _isRecording = false);
+    Haptics.heavy();
   }
 
   Future<void> _pickFile() async {
@@ -209,13 +214,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
     }
   }
 
-  Future<void> _processFile(String path, {String source = 'uploaded', bool isLiveRecording = false}) async {
-    // Defense-in-depth: check connectivity before attempting upload.
+  Future<void> _processFile(
+    String path, {
+    String source = 'uploaded',
+    bool isLiveRecording = false,
+  }) async {
     final online = await hasInternetConnection();
     if (!online) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('لا يوجد اتصال بالإنترنت'), backgroundColor: Colors.red),
+          SnackBar(
+            content: const Text('لا يوجد اتصال بالإنترنت.'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
         );
       }
       return;
@@ -236,17 +247,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
         },
       );
       if (mounted) {
+        Haptics.success();
         _showResult(transcription);
       }
     } catch (e) {
+      Haptics.error();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(friendlyErrorMessage(e)),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
         );
       }
     } finally {
-      // Always remove the local recording file once the upload terminates
-      // (success OR failure) — the audio has already left the device.
       _safeDelete(path);
       if (mounted) {
         setState(() {
@@ -258,7 +272,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
   }
 
   void _safeDelete(String path) {
-    // Fire-and-forget; missing/locked files are not actionable here.
     try {
       final f = File(path);
       f.exists().then((exists) {
@@ -268,32 +281,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
   }
 
   void _showResult(Transcription t) {
+    final brand = context.brand;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
       builder: (ctx) => DraggableScrollableSheet(
         initialChildSize: 0.7,
         minChildSize: 0.4,
         maxChildSize: 0.95,
         expand: false,
         builder: (_, scrollCtrl) => Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppSpacing.xl),
           child: ListView(
             controller: scrollCtrl,
             children: [
-              Center(
-                child: Container(
-                  width: 40, height: 4,
-                  decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
-                ),
-              ),
-              const SizedBox(height: 20),
+              const SizedBox(height: AppSpacing.lg),
               Wrap(
-                spacing: 8,
-                runSpacing: 8,
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.sm,
                 children: [
                   Chip(label: Text(t.languageName)),
                   Chip(label: Text('${t.duration.toStringAsFixed(1)}ث')),
@@ -301,42 +306,54 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
                   if (t.source == 'recorded')
                     Chip(
                       avatar: const Icon(Icons.mic, size: 16, color: Colors.white),
-                      label: const Text('تسجيل', style: TextStyle(color: Colors.white)),
+                      label: const Text(
+                        'تسجيل',
+                        style: TextStyle(color: Colors.white),
+                      ),
                       backgroundColor: Theme.of(ctx).colorScheme.primary,
                     ),
                 ],
               ),
               if (t.wasTrimmed)
                 Container(
-                  margin: const EdgeInsets.only(top: 12),
-                  padding: const EdgeInsets.all(12),
+                  margin: const EdgeInsets.only(top: AppSpacing.md),
+                  padding: const EdgeInsets.all(AppSpacing.md),
                   decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(8),
+                    color: brand.warningAmber.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
                   ),
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.info_outline, color: Colors.orange, size: 20),
-                      SizedBox(width: 8),
-                      Expanded(child: Text('تم قص الصوت (تجاوز الحد المسموح)', style: TextStyle(color: Colors.orange))),
+                      Icon(Icons.info_outline, color: brand.warningAmber, size: 20),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Text(
+                          'تم قص الصوت (تجاوز الحد المسموح).',
+                          style: TextStyle(color: brand.warningAmber),
+                        ),
+                      ),
                     ],
                   ),
                 ),
-              const SizedBox(height: 20),
+              const SizedBox(height: AppSpacing.lg),
               SelectableText(
                 t.text,
-                style: Theme.of(ctx).textTheme.bodyLarge?.copyWith(height: 1.8, fontSize: 18),
+                style: Theme.of(ctx).textTheme.bodyLarge?.copyWith(
+                      height: 1.8,
+                      fontSize: 18,
+                    ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: AppSpacing.lg),
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: () async {
                         await Clipboard.setData(ClipboardData(text: t.text));
+                        Haptics.success();
                         if (ctx.mounted) {
                           ScaffoldMessenger.of(ctx).showSnackBar(
-                            const SnackBar(content: Text('تم نسخ النص')),
+                            const SnackBar(content: Text('تم نسخ النص.')),
                           );
                         }
                       },
@@ -344,10 +361,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
                       label: const Text('نسخ'),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: AppSpacing.md),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () => Share.share(t.text),
+                      onPressed: () {
+                        Haptics.tap();
+                        Share.share(t.text);
+                      },
                       icon: const Icon(Icons.share),
                       label: const Text('مشاركة'),
                     ),
@@ -363,7 +383,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final scheme = Theme.of(context).colorScheme;
+    final brand = context.brand;
     return ConnectivityBanner(
       child: Scaffold(
         appBar: AppBar(
@@ -371,122 +392,165 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with SingleTickerProvid
           actions: [
             IconButton(
               icon: const Icon(Icons.settings),
+              tooltip: 'الإعدادات',
               onPressed: () => context.push('/settings'),
             ),
           ],
         ),
-        body: _isProcessing
-            ? Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 220,
-                      child: LinearProgressIndicator(
-                        value: _uploadProgress,
-                        minHeight: 6,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      _uploadProgress == null || _uploadProgress! >= 1.0
-                          ? 'جاري تحويل الصوت إلى نص...'
-                          : 'جاري الرفع... ${(_uploadProgress! * 100).toStringAsFixed(0)}%',
-                      style: const TextStyle(fontSize: 16),
-                    ),
-                  ],
-                ),
-              )
-            : Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    AnimatedBuilder(
-                      animation: _pulseController,
-                      builder: (context, child) {
-                        final glow = _isRecording ? (0.35 + 0.35 * _pulseController.value) : 0.25;
-                        return GestureDetector(
-                          onTap: _toggleRecording,
-                          onLongPress: _isRecording ? _cancelRecording : null,
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 250),
-                            width: _isRecording ? 160 : 130,
-                            height: _isRecording ? 160 : 130,
-                            decoration: BoxDecoration(
-                              color: _isRecording ? Colors.red : cs.primary,
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: (_isRecording ? Colors.red : cs.primary).withValues(alpha: glow),
-                                  blurRadius: _isRecording ? 40 : 20,
-                                  spreadRadius: _isRecording ? (10 + 6 * _pulseController.value) : 5,
-                                ),
-                              ],
-                            ),
-                            child: Icon(
-                              _isRecording ? Icons.stop : Icons.mic,
-                              size: 64,
-                              color: Colors.white,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 20),
-                    if (_isRecording) ...[
-                      Text(
-                        _fmt(_elapsed),
-                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                              color: Colors.red,
-                              fontWeight: FontWeight.bold,
-                              fontFeatures: const [FontFeature.tabularFigures()],
-                            ),
-                      ),
-                      const SizedBox(height: 8),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        child: LinearProgressIndicator(
-                          value: (_elapsed.inMilliseconds / _maxDuration.inMilliseconds).clamp(0, 1),
-                          backgroundColor: Colors.red.shade100,
-                          valueColor: const AlwaysStoppedAnimation(Colors.red),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'اضغط للإيقاف والتحويل · أقصى 10 دقائق',
-                        style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'استمرار بالضغط للإلغاء',
-                        style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
-                      ),
-                    ] else ...[
-                      Text(
-                        'اضغط للتسجيل',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'التسجيل مجاني ولا يُخصم من باقتك',
-                        style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                      ),
-                    ],
-                    const SizedBox(height: 48),
-                    OutlinedButton.icon(
-                      onPressed: _isRecording ? null : _pickFile,
-                      icon: const Icon(Icons.upload_file),
-                      label: const Text('رفع ملف صوتي'),
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 52),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+        body: AnimatedSwitcher(
+          duration: AppDuration.base,
+          child: _isProcessing
+              ? _buildProcessingState(brand)
+              : _buildIdleOrRecording(scheme, brand),
+        ),
       ),
+    );
+  }
+
+  Widget _buildProcessingState(BrandColors brand) {
+    return Center(
+      key: const ValueKey('processing'),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 220,
+            child: LinearProgressIndicator(
+              value: _uploadProgress,
+              minHeight: 6,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          Text(
+            _uploadProgress == null || _uploadProgress! >= 1.0
+                ? 'جاري تحويل الصوت إلى نص...'
+                : 'جاري الرفع... ${(_uploadProgress! * 100).toStringAsFixed(0)}%',
+            style: const TextStyle(fontSize: 16),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIdleOrRecording(ColorScheme scheme, BrandColors brand) {
+    return Padding(
+      key: const ValueKey('idle'),
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          RepaintBoundary(
+            child: AnimatedBuilder(
+              animation: _pulseController,
+              builder: (context, _) {
+                final glow = _isRecording
+                    ? (0.35 + 0.35 * _pulseController.value)
+                    : 0.25;
+                final ringColor = _isRecording ? brand.recordingRed : scheme.primary;
+                return Semantics(
+                  button: true,
+                  label: _isRecording ? 'إيقاف التسجيل' : 'بدء التسجيل',
+                  hint: _isRecording ? 'استمر بالضغط للإلغاء' : null,
+                  child: GestureDetector(
+                    onTap: _toggleRecording,
+                    onLongPress: _isRecording ? _cancelRecording : null,
+                    child: AnimatedContainer(
+                      duration: AppDuration.slow,
+                      curve: Curves.easeOut,
+                      width: _isRecording ? 160 : 130,
+                      height: _isRecording ? 160 : 130,
+                      decoration: BoxDecoration(
+                        color: ringColor,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: ringColor.withValues(alpha: glow),
+                            blurRadius: _isRecording ? 40 : 20,
+                            spreadRadius: _isRecording
+                                ? (10 + 6 * _pulseController.value)
+                                : 5,
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        _isRecording ? Icons.stop : Icons.mic,
+                        size: 64,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          AnimatedSwitcher(
+            duration: AppDuration.base,
+            child: _isRecording
+                ? _buildRecordingHints(scheme, brand)
+                : _buildIdleHints(scheme),
+          ),
+          const SizedBox(height: AppSpacing.xxxl),
+          OutlinedButton.icon(
+            onPressed: _isRecording ? null : _pickFile,
+            icon: const Icon(Icons.upload_file),
+            label: const Text('رفع ملف صوتي'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecordingHints(ColorScheme scheme, BrandColors brand) {
+    return Column(
+      key: const ValueKey('recording-hints'),
+      children: [
+        Text(
+          _fmt(_elapsed),
+          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                color: brand.recordingRed,
+                fontWeight: FontWeight.bold,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+          child: LinearProgressIndicator(
+            value: (_elapsed.inMilliseconds / _maxDuration.inMilliseconds)
+                .clamp(0, 1),
+            backgroundColor: brand.recordingRed.withValues(alpha: 0.2),
+            valueColor: AlwaysStoppedAnimation(brand.recordingRed),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Text(
+          'اضغط للإيقاف والتحويل · أقصى 10 دقائق',
+          style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        Text(
+          'استمر بالضغط للإلغاء',
+          style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 11),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildIdleHints(ColorScheme scheme) {
+    return Column(
+      key: const ValueKey('idle-hints'),
+      children: [
+        Text(
+          'اضغط للتسجيل',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        Text(
+          'التسجيل مجاني ولا يُخصم من باقتك.',
+          style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+        ),
+      ],
     );
   }
 

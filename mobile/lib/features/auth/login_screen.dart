@@ -2,9 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
 import 'package:bisawtak/features/auth/widgets/social_auth_buttons.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
+
+/// SharedPreferences flag set by routes.dart when an auth invalidation
+/// fires. The login screen reads + clears it on first build so the user
+/// understands why they were bounced back here.
+const kExpiredSessionFlag = 'expired_session_pending';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -20,6 +27,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _loading = false;
 
   @override
+  void initState() {
+    super.initState();
+    // If the user landed here because the session expired, surface that
+    // reason once. The flag is set by routes.dart on auth invalidation.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _consumeExpiredFlag());
+  }
+
+  Future<void> _consumeExpiredFlag() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!(prefs.getBool(kExpiredSessionFlag) ?? false)) return;
+    await prefs.remove(kExpiredSessionFlag);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('انتهت جلستك. الرجاء تسجيل الدخول من جديد.'),
+      ),
+    );
+  }
+
+  @override
   void dispose() {
     _usernameCtrl.dispose();
     _passwordCtrl.dispose();
@@ -33,23 +60,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (username.isEmpty || password.isEmpty) return;
 
     setState(() => _loading = true);
-    try {
-      await ref.read(authProvider.notifier).login(username, password);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+    // Errors are surfaced through `ref.listen(authProvider, ...)` in build()
+    // — do not also catch here, that yields a double snackbar.
+    await ref.read(authProvider.notifier).login(username, password);
+    if (mounted) setState(() => _loading = false);
   }
 
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
     final isBusy = _loading || auth.status == AuthStatus.loading;
+
+    final scheme = Theme.of(context).colorScheme;
 
     ref.listen<AuthState>(authProvider, (_, state) {
       if (state.status == AuthStatus.authenticated) {
@@ -60,7 +82,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(friendlyErrorMessage(err)),
-            backgroundColor: Colors.red,
+            backgroundColor: scheme.error,
           ),
         );
       }
@@ -69,26 +91,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppSpacing.xl),
           child: AutofillGroup(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const SizedBox(height: 60),
-                Icon(Icons.mic, size: 64, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(height: 16),
+                const SizedBox(height: AppSpacing.xxxl + AppSpacing.md),
+                Icon(Icons.mic, size: 64, color: scheme.primary),
+                const SizedBox(height: AppSpacing.lg),
                 Text(
                   'بصوتك',
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 Text(
                   'تسجيل الدخول',
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.grey),
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 40),
+                const SizedBox(height: AppSpacing.xxxl),
                 TextField(
                   controller: _usernameCtrl,
                   decoration: const InputDecoration(
@@ -104,7 +126,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     FilteringTextInputFormatter.deny(RegExp(r'\s')),
                   ],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: AppSpacing.lg),
                 TextField(
                   controller: _passwordCtrl,
                   obscureText: _obscurePassword,
@@ -114,6 +136,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     prefixIcon: const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
                       icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                      tooltip: _obscurePassword ? 'إظهار كلمة السر' : 'إخفاء كلمة السر',
                       onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                     ),
                   ),
@@ -127,16 +150,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     child: const Text('نسيت كلمة السر؟'),
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 ElevatedButton(
                   onPressed: isBusy ? null : _login,
                   child: isBusy
                       ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : const Text('تسجيل الدخول'),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: AppSpacing.xl),
                 const SocialAuthButtons(),
-                const SizedBox(height: 24),
+                const SizedBox(height: AppSpacing.xl),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [

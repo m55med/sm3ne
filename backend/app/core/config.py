@@ -85,11 +85,21 @@ if not DATABASE_URL:
 # JWT secret  (required, must be strong)
 # -----------------------------------------------------------------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
-if not SECRET_KEY or SECRET_KEY == "change-me" or len(SECRET_KEY) < 32:
+# Minimum is 24 chars (down from the previous 32) so we don't invalidate every
+# user's JWT when an older production key (e.g. the legacy 31-char one) is in
+# use. Rotating to 32+ chars is still recommended — log a warning so it's
+# tracked in observability without forcing a hard outage.
+if not SECRET_KEY or SECRET_KEY == "change-me" or len(SECRET_KEY) < 24:
     raise RuntimeError(
         "SECRET_KEY is missing, equals the placeholder 'change-me', or is shorter "
-        "than 32 characters. Generate one with: "
+        "than 24 characters. Generate one with: "
         "python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+    )
+if len(SECRET_KEY) < 32:
+    logger.warning(
+        "SECRET_KEY is %d chars — below the recommended 32. Consider rotating "
+        "to a longer key (token_urlsafe(48)) at a planned maintenance window.",
+        len(SECRET_KEY),
     )
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_MINUTES = int(os.getenv("TOKEN_EXPIRE_MINUTES", "1440"))
@@ -137,6 +147,48 @@ if not ADMIN_PASSWORD or len(ADMIN_PASSWORD) < 12:
         "ADMIN_PASSWORD is missing or shorter than 12 characters. Set a strong "
         "value in the environment before starting the server."
     )
+
+# -----------------------------------------------------------------------------
+# Telegram Bot (optional — when unset, /webhooks/telegram returns 503 and the
+# mobile linking endpoints respond with `telegram_disabled`).
+#
+# TELEGRAM_BOT_TOKEN     — issued by @BotFather (format: `<id>:<secret>`).
+# TELEGRAM_WEBHOOK_SECRET — random string we register with setWebhook and then
+#                          verify on every incoming update via the
+#                          `X-Telegram-Bot-Api-Secret-Token` header. Without it,
+#                          ANYONE can POST a forged update to our webhook URL.
+#                          Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+# TELEGRAM_BOT_USERNAME   — bot's @handle (without the @). Used to build deep
+#                          links like `t.me/<username>?start=<code>` shown in
+#                          the mobile linking screen.
+# TELEGRAM_PUBLIC_BASE_URL — public origin the webhook is reachable at
+#                          (e.g. https://voice.neojeen.com). Used by the admin
+#                          "register webhook" action to call setWebhook with
+#                          `<base>/api/v1/webhooks/telegram`.
+# TELEGRAM_API_BASE       — override only if running a self-hosted Bot API
+#                          server (e.g. to lift the 20 MB download cap).
+# -----------------------------------------------------------------------------
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")
+TELEGRAM_PUBLIC_BASE_URL = os.getenv("TELEGRAM_PUBLIC_BASE_URL", "").strip().rstrip("/")
+TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org").strip().rstrip("/")
+TELEGRAM_ENABLED = bool(TELEGRAM_BOT_TOKEN)
+
+if TELEGRAM_BOT_TOKEN and not TELEGRAM_WEBHOOK_SECRET:
+    # Hard-fail: without the shared secret the webhook is unauthenticated and
+    # anyone with the URL could push fake "user sent X" updates. Refuse to boot
+    # rather than silently run insecurely.
+    raise RuntimeError(
+        "TELEGRAM_BOT_TOKEN is set but TELEGRAM_WEBHOOK_SECRET is empty. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+    )
+
+# App-store / Play-store links surfaced to unlinked Telegram users so they can
+# install the app and link their account. Empty values are dropped from the
+# fallback message at render time.
+APP_STORE_URL = os.getenv("APP_STORE_URL", "").strip()
+PLAY_STORE_URL = os.getenv("PLAY_STORE_URL", "").strip()
 
 # -----------------------------------------------------------------------------
 # CORS

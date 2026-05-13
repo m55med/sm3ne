@@ -13,6 +13,9 @@ from app.routes.profile import router as profile_router
 from app.routes.plans import router as plans_router
 from app.routes.support import router as support_router
 from app.routes.admin import router as admin_router
+from app.routes.admin_telegram import router as admin_telegram_router
+from app.routes.telegram import router as telegram_router
+from app.routes.telegram_webhook import router as telegram_webhook_router
 from app.routes.legal import router as legal_router
 from app.services import whisper_service
 
@@ -48,6 +51,11 @@ app.include_router(api_keys_router, prefix=API_PREFIX)
 app.include_router(transcribe_router, prefix=API_PREFIX)
 app.include_router(support_router, prefix=API_PREFIX)
 app.include_router(admin_router, prefix=API_PREFIX)
+app.include_router(admin_telegram_router, prefix=API_PREFIX)
+app.include_router(telegram_router, prefix=API_PREFIX)
+# Webhook receiver lives under the same /api/v1 prefix as everything else;
+# the URL the bot calls is /api/v1/webhooks/telegram.
+app.include_router(telegram_webhook_router, prefix=API_PREFIX)
 # Legal pages live at the root (/privacy, /terms, /support) because Apple &
 # Google require the URLs to be plain-link friendly, not API-prefixed.
 app.include_router(legal_router)

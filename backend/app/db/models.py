@@ -271,6 +271,88 @@ class AppSetting(Base):
     updated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
 
+class TelegramUser(Base):
+    """Every Telegram account that has interacted with the bot, regardless of
+    whether they linked a Bisawtak app account.
+
+    We store unlinked users too so the admin dashboard can broadcast / message
+    them and so the same Telegram user keeps a stable history if they later
+    link, unlink, and re-link.
+    """
+    __tablename__ = "telegram_users"
+    __table_args__ = (
+        Index("idx_tg_users_linked", "linked_user_id"),
+        Index("idx_tg_users_last_seen", "last_interaction_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # Telegram's own numeric user_id. Never reused, fits in BIGINT — but the
+    # python int is unbounded so SQLAlchemy's Integer maps to BIGINT on
+    # Postgres which is what we want.
+    telegram_id = Column(Integer, unique=True, nullable=False, index=True)
+    first_name = Column(String(120), nullable=True)
+    last_name = Column(String(120), nullable=True)
+    username = Column(String(64), nullable=True, index=True)
+    language_code = Column(String(10), nullable=True)
+    is_premium = Column(Boolean, default=False)
+    is_bot = Column(Boolean, default=False)
+    bio = Column(Text, nullable=True)
+    # photo_file_id is Telegram's reference to the user's avatar; we resolve to
+    # a download URL on-demand in the admin dashboard rather than rehosting.
+    photo_file_id = Column(String(255), nullable=True)
+    # Set when the user blocks the bot (we detect this via Bot API errors and
+    # via "my_chat_member" updates with status='kicked').
+    is_blocked = Column(Boolean, default=False, index=True)
+    # The linked Bisawtak account, if any. NULL = unlinked. Cleared (not
+    # deleted) when the user unlinks or deletes their app account.
+    linked_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    linked_at = Column(DateTime(timezone=True), nullable=True)
+    last_interaction_at = Column(DateTime(timezone=True), default=utcnow, index=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    linked_user = relationship("User", foreign_keys=[linked_user_id])
+
+
+class TelegramLinkCode(Base):
+    """One-time code generated in the mobile app and consumed by the Telegram
+    bot to prove the same human controls both sides.
+
+    Codes are single-use and expire after 10 minutes. We store a hashed copy
+    (HMAC-SHA256 under SECRET_KEY, like API keys) so a DB leak doesn't hand the
+    attacker working linking codes.
+    """
+    __tablename__ = "telegram_link_codes"
+    __table_args__ = (
+        Index("idx_tg_codes_user_active", "user_id", "consumed_at", "expires_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    code_hash = Column(String(64), nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    consumed_by_telegram_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+class TelegramBotMessage(Base):
+    """Admin-editable template strings the bot sends to users.
+
+    Keys are stable identifiers (e.g. ``welcome``, ``link_success``, ``not_linked``,
+    ``quota_exceeded``). Defaults are seeded on first startup; admins overwrite
+    the row from the dashboard. When a key is missing from the DB the runtime
+    falls back to a built-in default string.
+    """
+    __tablename__ = "telegram_bot_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String(60), unique=True, nullable=False, index=True)
+    text_ar = Column(Text, nullable=False)
+    description = Column(String(255), nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+
 class AuditLog(Base):
     """Append-only audit trail for security-sensitive actions.
 

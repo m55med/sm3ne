@@ -22,9 +22,17 @@
 	<dict>
 		<key>NSExtensionAttributes</key>
 		<dict>
+			<!-- Broaden activation so the extension appears for audio attachments,
+			     file attachments, and movie attachments (Messenger/iOS sometimes
+			     wrap voice in mp4). ShareViewController.swift filters by UTI and
+			     by file extension before processing. -->
 			<key>NSExtensionActivationRule</key>
 			<dict>
+				<key>NSExtensionActivationSupportsAttachmentsWithMaxCount</key>
+				<integer>1</integer>
 				<key>NSExtensionActivationSupportsFileWithMaxCount</key>
+				<integer>1</integer>
+				<key>NSExtensionActivationSupportsMovieWithMaxCount</key>
 				<integer>1</integer>
 			</dict>
 		</dict>

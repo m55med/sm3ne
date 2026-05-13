@@ -144,6 +144,59 @@ def _run_idempotent_ddl(db):
         "CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_created ON audit_logs(actor_user_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created ON audit_logs(action, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_audit_logs_target ON audit_logs(target_type, target_id)",
+        # Telegram bot integration — see app/db/models.py for column docs.
+        # telegram_id is BIGINT because Telegram user IDs already exceed 2^31.
+        """CREATE TABLE IF NOT EXISTS telegram_users (
+            id SERIAL PRIMARY KEY,
+            telegram_id BIGINT UNIQUE NOT NULL,
+            first_name VARCHAR(120),
+            last_name VARCHAR(120),
+            username VARCHAR(64),
+            language_code VARCHAR(10),
+            is_premium BOOLEAN DEFAULT FALSE,
+            is_bot BOOLEAN DEFAULT FALSE,
+            bio TEXT,
+            photo_file_id VARCHAR(255),
+            is_blocked BOOLEAN DEFAULT FALSE,
+            linked_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            linked_at TIMESTAMP WITH TIME ZONE,
+            last_interaction_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_tg_users_telegram_id ON telegram_users(telegram_id)",
+        "CREATE INDEX IF NOT EXISTS idx_tg_users_linked ON telegram_users(linked_user_id)",
+        # Defense-in-depth: a Bisawtak user must never be linked to two
+        # Telegram accounts simultaneously. The link service enforces this
+        # in application code via SELECT FOR UPDATE; this partial unique
+        # index is the DB-side belt-and-braces. NULL values are permitted
+        # by Postgres's NULL-distinctness in unique indexes.
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_tg_users_linked_user_id ON telegram_users(linked_user_id) WHERE linked_user_id IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_tg_users_last_seen ON telegram_users(last_interaction_at)",
+        "CREATE INDEX IF NOT EXISTS idx_tg_users_username ON telegram_users(username)",
+        "CREATE INDEX IF NOT EXISTS idx_tg_users_blocked ON telegram_users(is_blocked)",
+        """CREATE TABLE IF NOT EXISTS telegram_link_codes (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            code_hash VARCHAR(64) NOT NULL UNIQUE,
+            expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+            consumed_at TIMESTAMP WITH TIME ZONE,
+            consumed_by_telegram_id BIGINT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_tg_codes_user_active ON telegram_link_codes(user_id, consumed_at, expires_at)",
+        "CREATE INDEX IF NOT EXISTS idx_tg_codes_hash ON telegram_link_codes(code_hash)",
+        """CREATE TABLE IF NOT EXISTS telegram_bot_messages (
+            id SERIAL PRIMARY KEY,
+            key VARCHAR(60) UNIQUE NOT NULL,
+            text_ar TEXT NOT NULL,
+            description VARCHAR(255),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_by_user_id INTEGER REFERENCES users(id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_tg_bot_messages_key ON telegram_bot_messages(key)",
+        # New source value for transcription_requests; older check-constraints
+        # (none currently) won't fail since `source` is a free VARCHAR.
+        # Documented values: upload | recording | share | api | telegram
     ]
     for sql in statements:
         db.execute(text(sql))
@@ -252,6 +305,12 @@ def _seed_db():
         _backfill_user_public_ids(db)
         _backfill_request_plan_snapshots(db)
         settings_service.seed_default_transcription_provider(db)
+        # Telegram bot message templates — idempotent (only inserts missing keys).
+        try:
+            from app.services import telegram_bot_messages
+            telegram_bot_messages.seed_defaults(db)
+        except Exception as exc:  # noqa: BLE001 — never block startup on this
+            print(f"telegram_bot_messages.seed_defaults failed (non-fatal): {exc}")
 
         if not db.query(Plan).first():
             db.add_all([

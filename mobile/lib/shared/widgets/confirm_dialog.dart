@@ -26,8 +26,8 @@ Future<bool> showConfirmDialog(
           FilledButton(
             style: destructive
                 ? FilledButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
+                    backgroundColor: cs.error,
+                    foregroundColor: cs.onError,
                   )
                 : FilledButton.styleFrom(
                     backgroundColor: cs.primary,

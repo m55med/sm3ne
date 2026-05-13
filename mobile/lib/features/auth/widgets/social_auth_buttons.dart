@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
 
@@ -16,19 +17,23 @@ class SocialAuthButtons extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       children: [
         Row(
           children: [
             const Expanded(child: Divider()),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Text('أو تابع عبر', style: TextStyle(color: Colors.grey.shade600)),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+              child: Text(
+                'أو تابع عبر',
+                style: TextStyle(color: scheme.onSurfaceVariant),
+              ),
             ),
             const Expanded(child: Divider()),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppSpacing.lg),
         Row(
           children: [
             Expanded(
@@ -38,12 +43,14 @@ class SocialAuthButtons extends ConsumerWidget {
                 label: const Text('Google'),
                 style: OutlinedButton.styleFrom(
                   minimumSize: const Size(0, 48),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
                 ),
               ),
             ),
             if (Platform.isIOS) ...[
-              const SizedBox(width: 12),
+              const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () => _appleSignIn(context, ref),
@@ -51,7 +58,9 @@ class SocialAuthButtons extends ConsumerWidget {
                   label: const Text('Apple'),
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size(0, 48),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                    ),
                   ),
                 ),
               ),
@@ -67,17 +76,22 @@ class SocialAuthButtons extends ConsumerWidget {
       // TODO Mobile-2: serverClientId must come from AppConstants (e.g. AppConstants.googleServerClientId)
       // so the backend can verify the audience of the ID token.
       final googleUser = await GoogleSignIn(scopes: ['email']).signIn();
-      if (googleUser == null) return; // user cancelled
+      if (googleUser == null) {
+        // User dismissed the system sheet. Show a neutral confirmation
+        // instead of staying silent — silence reads as "the app froze".
+        if (context.mounted) _info(context, 'تم إلغاء تسجيل الدخول');
+        return;
+      }
       final auth = await googleUser.authentication;
       if (auth.idToken != null) {
         await ref.read(authProvider.notifier).googleSignIn(auth.idToken!);
       } else {
         if (context.mounted) {
-          _toast(context, 'تعذر الحصول على بيانات الحساب من Google');
+          _error(context, 'تعذر الحصول على بيانات الحساب من Google');
         }
       }
     } catch (e) {
-      if (context.mounted) _toast(context, friendlyErrorMessage(e));
+      if (context.mounted) _error(context, friendlyErrorMessage(e));
     }
   }
 
@@ -96,7 +110,7 @@ class SocialAuthButtons extends ConsumerWidget {
 
       final identityToken = credential.identityToken;
       if (identityToken == null) {
-        if (context.mounted) _toast(context, 'تعذر الحصول على بيانات الحساب من Apple');
+        if (context.mounted) _error(context, 'تعذر الحصول على بيانات الحساب من Apple');
         return;
       }
 
@@ -106,8 +120,16 @@ class SocialAuthButtons extends ConsumerWidget {
       await ref
           .read(authProvider.notifier)
           .appleSignIn(identityToken, nonce: rawNonce);
+    } on SignInWithAppleAuthorizationException catch (e) {
+      // The Apple SDK throws a typed exception on cancel/cancelled. Surface
+      // a neutral message rather than the technical error.
+      if (e.code == AuthorizationErrorCode.canceled) {
+        if (context.mounted) _info(context, 'تم إلغاء تسجيل الدخول');
+        return;
+      }
+      if (context.mounted) _error(context, friendlyErrorMessage(e));
     } catch (e) {
-      if (context.mounted) _toast(context, friendlyErrorMessage(e));
+      if (context.mounted) _error(context, friendlyErrorMessage(e));
     }
   }
 
@@ -123,9 +145,16 @@ class SocialAuthButtons extends ConsumerWidget {
     return sha256.convert(utf8.encode(input)).toString();
   }
 
-  void _toast(BuildContext context, String msg) {
+  void _error(BuildContext context, String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.red),
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: Theme.of(context).colorScheme.error,
+      ),
     );
+  }
+
+  void _info(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 }

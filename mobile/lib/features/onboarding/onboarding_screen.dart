@@ -74,7 +74,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       decoration: BoxDecoration(
                         color: _currentPage == i
                             ? Theme.of(context).colorScheme.primary
-                            : Colors.grey.shade300,
+                            : Theme.of(context).colorScheme.outlineVariant,
                         borderRadius: BorderRadius.circular(4),
                       ),
                     )),

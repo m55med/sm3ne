@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
+import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/api/api_client.dart';
 import 'package:bisawtak/data/repositories/support_repository.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
@@ -145,29 +146,34 @@ class _TicketCard extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: Row(
-            children: [
-              _TypeBadge(type: type),
-              const SizedBox(width: 6),
-              _StatusBadge(status: status),
-              const Spacer(),
-              if (replyCount > 0) ...[
-                Icon(Icons.forum_outlined, size: 14, color: Colors.grey.shade600),
-                const SizedBox(width: 4),
-                Text('$replyCount', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-                const SizedBox(width: 8),
-              ],
-              if (createdAt != null)
-                Text(
-                  _formatDate(createdAt),
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-                ),
-            ],
-          ),
+        subtitle: Builder(
+          builder: (context) {
+            final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+            return Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                children: [
+                  _TypeBadge(type: type),
+                  const SizedBox(width: 6),
+                  _StatusBadge(status: status),
+                  const Spacer(),
+                  if (replyCount > 0) ...[
+                    Icon(Icons.forum_outlined, size: 14, color: muted),
+                    const SizedBox(width: 4),
+                    Text('$replyCount', style: TextStyle(fontSize: 12, color: muted)),
+                    const SizedBox(width: 8),
+                  ],
+                  if (createdAt != null)
+                    Text(
+                      _formatDate(createdAt),
+                      style: TextStyle(fontSize: 11, color: muted),
+                    ),
+                ],
+              ),
+            );
+          },
         ),
-        trailing: const Icon(Icons.chevron_left, size: 20),
+        trailing: Icon(forwardChevron(context), size: 20),
       ),
     );
   }
@@ -313,7 +319,7 @@ class _NewTicketSheetState extends ConsumerState<_NewTicketSheet> {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
+                    color: Theme.of(context).colorScheme.outlineVariant,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -349,7 +355,7 @@ class _NewTicketSheetState extends ConsumerState<_NewTicketSheet> {
               ),
               if (_error != null) ...[
                 const SizedBox(height: 12),
-                Text(_error!, style: const TextStyle(color: Colors.red)),
+                Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
               ],
               const SizedBox(height: 16),
               FilledButton.icon(

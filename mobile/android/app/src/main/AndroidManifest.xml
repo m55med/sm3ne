@@ -36,15 +36,44 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- Receive shared audio files -->
+            <!-- Receive shared audio files (WhatsApp, Drive, Gmail attachments, etc.) -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="audio/*" />
             </intent-filter>
+            <!-- Telegram + file managers often ship voice notes as a generic
+                 "document" with these container MIMEs instead of audio/*. The
+                 Flutter handler still filters by extension before processing. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/ogg" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <!-- Voice notes wrapped in a video container — iOS-recorded m4a
+                 and some Messenger attachments arrive as video/mp4 or 3gp. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="video/mp4" />
+                <data android:mimeType="video/3gpp" />
+                <data android:mimeType="video/quicktime" />
+            </intent-filter>
+            <!-- Multi-file share (some pickers send forwarded media as SEND_MULTIPLE). -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="audio/*" />
+            </intent-filter>
+            <!-- "Open with" from Files/Drive/Gmail/Downloads — Android invokes
+                 ACTION_VIEW on a content:// URI rather than SEND. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="audio/*" />
                 <data android:mimeType="application/ogg" />
             </intent-filter>
             <!-- Deep links: bisawtak://... -->

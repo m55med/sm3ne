@@ -4,8 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/api/api_client.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
+import 'package:bisawtak/shared/utils/error_messages.dart';
+import 'package:bisawtak/shared/utils/haptics.dart';
 
 class DeleteAccountScreen extends ConsumerStatefulWidget {
   const DeleteAccountScreen({super.key});
@@ -34,22 +37,32 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
     if (user == null) return;
 
     if (!_ackPermanent || !_ackData) {
-      setState(() => _error = 'لازم توافق على الاتنين قبل التأكيد');
+      setState(() => _error = 'يجب الموافقة على البندين قبل المتابعة.');
       return;
     }
 
     final confirmed = await showDialog<bool>(
       context: context,
+      // This dialog represents the point of no return — block taps outside
+      // so the user can't accidentally dismiss it.
+      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         title: const Text('تأكيد نهائي'),
         content: const Text(
-          'الإجراء ده نهائي ومش هينفع تتراجع عنه.\nهتفقد كل تسجيلاتك واشتراكاتك ورسايلك.\nمتأكد؟',
+          'هذا الإجراء نهائي ولا يمكن التراجع عنه.\n'
+          'ستفقد جميع تسجيلاتك واشتراكاتك ورسائلك.\n'
+          'هل أنت متأكد؟',
           style: TextStyle(height: 1.6),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('احذف الحساب'),
           ),
@@ -72,7 +85,7 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
           final token = await _freshGoogleToken();
           if (token == null) {
             setState(() {
-              _error = 'تأكيد الهوية بـ Google مطلوب';
+              _error = 'تأكيد الهوية عبر Google مطلوب لإتمام الحذف.';
               _busy = false;
             });
             return;
@@ -83,7 +96,7 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
           final token = await _freshAppleToken();
           if (token == null) {
             setState(() {
-              _error = 'تأكيد الهوية بـ Apple مطلوب';
+              _error = 'تأكيد الهوية عبر Apple مطلوب لإتمام الحذف.';
               _busy = false;
             });
             return;
@@ -93,7 +106,7 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
         default:
           if (_passwordCtrl.text.isEmpty) {
             setState(() {
-              _error = 'كلمة السر مطلوبة';
+              _error = 'كلمة السر مطلوبة.';
               _busy = false;
             });
             return;
@@ -103,21 +116,24 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
 
       await ref.read(apiClientProvider).dio.delete('/profile', data: body);
 
-      // Locally clear everything and bounce to login
+      // Locally clear everything and bounce to login.
       await ref.read(authProvider.notifier).logout();
+      Haptics.heavy();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حذف الحساب نهائياً')),
+        const SnackBar(content: Text('تم حذف الحساب نهائياً.')),
       );
       context.go('/login');
     } on DioException catch (e) {
+      Haptics.error();
       setState(() {
-        _error = e.response?.data?['detail']?.toString() ?? 'فشل الحذف';
+        _error = friendlyErrorMessage(e);
         _busy = false;
       });
     } catch (e) {
+      Haptics.error();
       setState(() {
-        _error = e.toString();
+        _error = friendlyErrorMessage(e);
         _busy = false;
       });
     }
@@ -149,36 +165,45 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
   Widget build(BuildContext context) {
     final user = ref.watch(authProvider).user;
     final provider = user?.authProvider ?? 'local';
+    final scheme = Theme.of(context).colorScheme;
+    final errorColor = scheme.error;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('حذف الحساب'),
-        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => context.pop()),
-      ),
+      appBar: AppBar(title: const Text('حذف الحساب')),
       body: ListView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(AppSpacing.xl),
         children: [
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppSpacing.lg),
             decoration: BoxDecoration(
-              color: Colors.red.shade50,
-              border: Border.all(color: Colors.red.shade200),
-              borderRadius: BorderRadius.circular(12),
+              color: errorColor.withValues(alpha: 0.08),
+              border: Border.all(color: errorColor.withValues(alpha: 0.4)),
+              borderRadius: BorderRadius.circular(AppRadius.md),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.warning_amber_rounded, color: Colors.red.shade700, size: 28),
-                const SizedBox(width: 12),
+                Icon(Icons.warning_amber_rounded, color: errorColor, size: 28),
+                const SizedBox(width: AppSpacing.md),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('تحذير', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red.shade700, fontSize: 16)),
-                      const SizedBox(height: 6),
                       Text(
-                        'حذف الحساب إجراء نهائي. كل تسجيلاتك، رسائلك، اشتراكاتك والبيانات بتاعتك هتتحذف نهائياً ومش هنقدر نسترجعها بعدها.',
-                        style: TextStyle(color: Colors.red.shade900, height: 1.5),
+                        'تحذير',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: errorColor,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.xs + 2),
+                      Text(
+                        'حذف الحساب إجراء نهائي. ستُحذف جميع تسجيلاتك ورسائلك واشتراكاتك وبياناتك من خوادمنا، ولن يمكن استرجاعها لاحقاً.',
+                        style: TextStyle(
+                          color: scheme.onSurface,
+                          height: 1.5,
+                        ),
                       ),
                     ],
                   ),
@@ -186,20 +211,22 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
               ],
             ),
           ),
-          const SizedBox(height: 24),
-
-          Text('تأكيد الهوية', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
+          const SizedBox(height: AppSpacing.xl),
           Text(
-            'لحمايتك، لازم نتأكد إنك أنت صاحب الحساب فعلاً.',
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+            'تأكيد الهوية',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
-          const SizedBox(height: 16),
-
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'لحمايتك نحتاج التأكد من أنك صاحب الحساب فعلاً.',
+            style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
+          ),
+          const SizedBox(height: AppSpacing.lg),
           if (provider == 'local') ...[
             TextField(
               controller: _passwordCtrl,
               obscureText: true,
+              autofillHints: const [AutofillHints.password],
               decoration: const InputDecoration(
                 labelText: 'كلمة السر الحالية',
                 prefixIcon: Icon(Icons.lock_outline),
@@ -207,32 +234,31 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
             ),
           ] else ...[
             Container(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(AppSpacing.md + 2),
               decoration: BoxDecoration(
-                color: Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(10),
+                color: scheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(AppRadius.sm + 2),
               ),
               child: Row(
                 children: [
                   Icon(
                     provider == 'google' ? Icons.account_circle : Icons.apple,
-                    color: Colors.grey.shade700,
+                    color: scheme.onSurfaceVariant,
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: AppSpacing.md),
                   Expanded(
                     child: Text(
                       provider == 'google'
-                          ? 'لما تضغط "احذف"، هنطلب منك تسجيل دخول بـ Google تاني للتأكيد'
-                          : 'لما تضغط "احذف"، هنطلب منك تسجيل دخول بـ Apple تاني للتأكيد',
-                      style: TextStyle(color: Colors.grey.shade800, height: 1.4),
+                          ? 'عند الضغط على "احذف" سيُطلب منك تسجيل الدخول بـ Google مجدداً للتأكيد.'
+                          : 'عند الضغط على "احذف" سيُطلب منك تسجيل الدخول بـ Apple مجدداً للتأكيد.',
+                      style: TextStyle(color: scheme.onSurface, height: 1.4),
                     ),
                   ),
                 ],
               ),
             ),
           ],
-          const SizedBox(height: 16),
-
+          const SizedBox(height: AppSpacing.lg),
           TextField(
             controller: _reasonCtrl,
             maxLines: 3,
@@ -240,55 +266,55 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
             decoration: const InputDecoration(
               labelText: 'سبب الحذف (اختياري)',
               alignLabelWithHint: true,
-              prefixIcon: Padding(padding: EdgeInsets.only(bottom: 60), child: Icon(Icons.edit_note)),
             ),
           ),
-          const SizedBox(height: 8),
-
+          const SizedBox(height: AppSpacing.sm),
           CheckboxListTile(
             value: _ackPermanent,
             onChanged: (v) => setState(() => _ackPermanent = v ?? false),
             controlAffinity: ListTileControlAffinity.leading,
             contentPadding: EdgeInsets.zero,
-            title: const Text('فاهم أن الحذف نهائي ومش بيتراجع عنه'),
+            title: const Text('أُقرّ بأن الحذف نهائي ولا يمكن التراجع عنه.'),
           ),
           CheckboxListTile(
             value: _ackData,
             onChanged: (v) => setState(() => _ackData = v ?? false),
             controlAffinity: ListTileControlAffinity.leading,
             contentPadding: EdgeInsets.zero,
-            title: const Text('فاهم أن كل بياناتي هتتحذف من السيرفر'),
+            title: const Text('أُقرّ بأن جميع بياناتي ستُحذف من الخوادم.'),
           ),
-
           if (_error != null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(AppSpacing.md),
               decoration: BoxDecoration(
-                color: Colors.red.shade50,
-                border: Border.all(color: Colors.red.shade200),
-                borderRadius: BorderRadius.circular(8),
+                color: errorColor.withValues(alpha: 0.08),
+                border: Border.all(color: errorColor.withValues(alpha: 0.4)),
+                borderRadius: BorderRadius.circular(AppRadius.sm),
               ),
-              child: Text(_error!, style: TextStyle(color: Colors.red.shade800)),
+              child: Text(_error!, style: TextStyle(color: errorColor)),
             ),
           ],
-          const SizedBox(height: 24),
-
+          const SizedBox(height: AppSpacing.xl),
           FilledButton.icon(
             onPressed: _busy ? null : _confirmAndDelete,
             icon: _busy
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
                 : const Icon(Icons.delete_forever),
-            label: Text(_busy ? 'جاري الحذف...' : 'احذف الحساب نهائياً'),
+            label: Text(_busy ? 'جارٍ الحذف...' : 'احذف الحساب نهائياً'),
             style: FilledButton.styleFrom(
-              backgroundColor: Colors.red,
+              backgroundColor: errorColor,
+              foregroundColor: Colors.white,
               minimumSize: const Size.fromHeight(52),
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
           OutlinedButton(
             onPressed: _busy ? null : () => context.pop(),
-            style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
             child: const Text('إلغاء'),
           ),
         ],

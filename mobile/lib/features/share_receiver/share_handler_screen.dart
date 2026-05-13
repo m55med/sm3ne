@@ -71,7 +71,10 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(friendlyErrorMessage(e)),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
         );
       }
     }
@@ -101,11 +104,15 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                          Icon(Icons.error_outline, size: 64, color: Theme.of(context).colorScheme.error),
                           const SizedBox(height: 16),
                           Text('فشل التحويل', style: Theme.of(context).textTheme.titleLarge),
                           const SizedBox(height: 8),
-                          Text(_error!, style: const TextStyle(color: Colors.grey), textAlign: TextAlign.center),
+                          Text(
+                            _error!,
+                            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                            textAlign: TextAlign.center,
+                          ),
                           const SizedBox(height: 24),
                           ElevatedButton(onPressed: () => widget.onDone?.call(), child: const Text('إغلاق')),
                         ],

@@ -182,17 +182,25 @@ async def google_auth(body: SocialAuthRequest, request: Request, db: Session = D
             # F21: refuse to silently take over a local-password account. The
             # legitimate owner has to log in with their password first, then
             # explicitly link Google from inside the app (linking flow TBD).
+            # Exception: admin accounts (operator/owner) — see Apple endpoint below.
             if existing.auth_provider == "local":
-                _record_login(db, request, user_id=existing.id, username_attempted=existing.username,
-                              provider="google", event_type="login", success=False,
-                              error_message="account_exists_local")
-                raise HTTPException(
-                    409,
-                    {
-                        "error": "account_exists_local",
-                        "message": "An account with this email exists. Please sign in with your password to link this provider.",
-                    },
-                )
+                if existing.role != "admin":
+                    _record_login(db, request, user_id=existing.id, username_attempted=existing.username,
+                                  provider="google", event_type="login", success=False,
+                                  error_message="account_exists_local")
+                    raise HTTPException(
+                        409,
+                        {
+                            "error": "account_exists_local",
+                            "message": "An account with this email exists. Please sign in with your password to link this provider.",
+                        },
+                    )
+                existing.auth_provider = "google"
+                existing.provider_id = info["provider_id"]
+                if not existing.full_name and info.get("full_name"):
+                    existing.full_name = info["full_name"]
+                db.commit()
+                db.refresh(existing)
             user = existing
 
     created = False
@@ -236,18 +244,34 @@ async def apple_auth(body: SocialAuthRequest, request: Request, db: Session = De
     if not user and info.get("email"):
         existing = db.query(User).filter(User.email == info["email"]).first()
         if existing:
-            # F21: same takeover guard as Google.
+            # F21 (Google/Apple): refuse to silently link a verified-provider sign-in
+            # to a local-password account that didn't opt in. Exception: admin accounts
+            # are the system operator/owner and bootstrap the deployment — the F21
+            # takeover concern (attacker creating a social account with a victim's
+            # email) doesn't apply, since admin emails are operator-set, not user-set.
             if existing.auth_provider == "local":
-                _record_login(db, request, user_id=existing.id, username_attempted=existing.username,
-                              provider="apple", event_type="login", success=False,
-                              error_message="account_exists_local")
-                raise HTTPException(
-                    409,
-                    {
-                        "error": "account_exists_local",
-                        "message": "An account with this email exists. Please sign in with your password to link this provider.",
-                    },
-                )
+                # Admin accounts are the operator/owner and bootstrap the deployment.
+                # The F21 concern (attacker registering social with victim's email)
+                # doesn't apply because admin emails are operator-set, not user-set.
+                # So we auto-link admins, but still block silent linking for regular
+                # local users.
+                if existing.role != "admin":
+                    _record_login(db, request, user_id=existing.id, username_attempted=existing.username,
+                                  provider="apple", event_type="login", success=False,
+                                  error_message="account_exists_local")
+                    raise HTTPException(
+                        409,
+                        {
+                            "error": "account_exists_local",
+                            "message": "An account with this email exists. Please sign in with your password to link this provider.",
+                        },
+                    )
+                existing.auth_provider = "apple"
+                existing.provider_id = info["provider_id"]
+                if not existing.full_name and info.get("full_name"):
+                    existing.full_name = info["full_name"]
+                db.commit()
+                db.refresh(existing)
             user = existing
 
     created = False

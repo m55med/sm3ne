@@ -45,7 +45,10 @@ class Transcription {
       source: source,
       sourceApp: sourceApp,
       originalFilename: null,
-      createdAt: DateTime.now().toIso8601String(),
+      // Always store timestamps in UTC. The UI converts back via
+      // .toLocal() when rendering — that way the row keeps its meaning
+      // even if the user switches timezones between creating and viewing.
+      createdAt: DateTime.now().toUtc().toIso8601String(),
     );
   }
 

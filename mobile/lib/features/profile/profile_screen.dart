@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
 import 'package:bisawtak/shared/widgets/confirm_dialog.dart';
 
@@ -16,37 +17,39 @@ class ProfileScreen extends ConsumerWidget {
     final initial =
         (user?.fullName ?? user?.username ?? '?').characters.firstOrNull?.toUpperCase() ?? '?';
 
+    final scheme = Theme.of(context).colorScheme;
+
     return Scaffold(
       appBar: AppBar(title: const Text('حسابي')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         children: [
           // Profile header
           Card(
             child: Padding(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(AppSpacing.xl),
               child: Column(
                 children: [
                   CircleAvatar(
                     radius: 40,
-                    backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                    backgroundColor: scheme.primaryContainer,
                     child: Text(
                       initial,
-                      style: TextStyle(fontSize: 32, color: Theme.of(context).colorScheme.primary),
+                      style: TextStyle(fontSize: 32, color: scheme.primary),
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppSpacing.md),
                   Text(
                     user?.fullName ?? user?.username ?? '',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                   ),
                   if (user?.email != null)
-                    Text(user!.email!, style: TextStyle(color: Colors.grey.shade600)),
+                    Text(user!.email!, style: TextStyle(color: scheme.onSurfaceVariant)),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           _MenuItem(icon: Icons.edit_outlined, title: 'تعديل البروفايل', onTap: () => context.push('/profile/edit')),
           _MenuItem(
             icon: Icons.workspace_premium,
@@ -58,11 +61,11 @@ class ProfileScreen extends ConsumerWidget {
           _MenuItem(icon: Icons.support_agent, title: 'اتصل بنا / اقتراحات', onTap: () => context.push('/contact')),
           _MenuItem(icon: Icons.help_outline, title: 'المساعدة', onTap: () => context.push('/help')),
           _MenuItem(icon: Icons.info_outline, title: 'عن التطبيق', onTap: () => context.push('/about')),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           _MenuItem(
             icon: Icons.logout,
             title: 'تسجيل الخروج',
-            color: Colors.red,
+            color: scheme.error,
             onTap: () async {
               final ok = await showConfirmDialog(
                 context,
@@ -79,7 +82,7 @@ class ProfileScreen extends ConsumerWidget {
           _MenuItem(
             icon: Icons.delete_forever,
             title: 'حذف الحساب نهائياً',
-            color: Colors.red,
+            color: scheme.error,
             onTap: () => context.push('/account/delete'),
           ),
         ],
@@ -130,12 +133,12 @@ class _MenuItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
       child: ListTile(
         leading: Icon(icon, color: color),
         title: Text(title, style: TextStyle(color: color)),
         subtitle: subtitle != null ? Text(subtitle!) : null,
-        trailing: const Icon(Icons.chevron_right),
+        trailing: Icon(forwardChevron(context)),
         onTap: onTap,
       ),
     );

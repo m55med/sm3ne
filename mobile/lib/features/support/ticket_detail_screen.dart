@@ -70,7 +70,7 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(friendlyErrorMessage(e)),
-            backgroundColor: Colors.red,
+            backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
       }
@@ -98,7 +98,7 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.error_outline, color: Colors.red.shade300, size: 48),
+            Icon(Icons.error_outline, color: Theme.of(context).colorScheme.error, size: 48),
             const SizedBox(height: 12),
             Text(_error!),
             const SizedBox(height: 12),
@@ -173,13 +173,21 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
             ),
           )
         else
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            color: Colors.grey.shade100,
-            child: Center(
-              child: Text('الرسالة مغلقة', style: TextStyle(color: Colors.grey.shade700)),
-            ),
+          Builder(
+            builder: (context) {
+              final scheme = Theme.of(context).colorScheme;
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                color: scheme.surfaceContainerHighest,
+                child: Center(
+                  child: Text(
+                    'الرسالة مغلقة',
+                    style: TextStyle(color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              );
+            },
           ),
       ],
     );
@@ -234,6 +242,9 @@ class _MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    // Chat convention (matches WhatsApp/Telegram RTL): the "other" speaker
+    // sits visually-left, the current user visually-right. Physical
+    // Alignment is intentional here — it's not an RTL bug.
     return Align(
       alignment: isAdmin ? Alignment.centerLeft : Alignment.centerRight,
       child: Container(
@@ -241,7 +252,7 @@ class _MessageBubble extends StatelessWidget {
         constraints: const BoxConstraints(maxWidth: 320),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: isAdmin ? cs.primaryContainer : Colors.grey.shade100,
+          color: isAdmin ? cs.primaryContainer : cs.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Column(
@@ -252,7 +263,7 @@ class _MessageBubble extends StatelessWidget {
                 Icon(
                   isAdmin ? Icons.support_agent : Icons.person,
                   size: 14,
-                  color: isAdmin ? cs.primary : Colors.grey.shade700,
+                  color: isAdmin ? cs.primary : cs.onSurfaceVariant,
                 ),
                 const SizedBox(width: 4),
                 Text(
@@ -260,7 +271,7 @@ class _MessageBubble extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: isAdmin ? cs.primary : Colors.grey.shade700,
+                    color: isAdmin ? cs.primary : cs.onSurfaceVariant,
                   ),
                 ),
               ],
@@ -269,7 +280,7 @@ class _MessageBubble extends StatelessWidget {
             Text(message, style: const TextStyle(height: 1.5)),
             if (createdAt != null) ...[
               const SizedBox(height: 4),
-              Text(_fmt(createdAt!), style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
+              Text(_fmt(createdAt!), style: TextStyle(fontSize: 10, color: cs.onSurfaceVariant)),
             ],
           ],
         ),

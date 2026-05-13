@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
 import 'package:bisawtak/features/auth/widgets/social_auth_buttons.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
@@ -38,6 +39,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   }
 
   Future<void> _register() async {
+    // Guard against double submission. `auth.status == loading` is also
+    // checked at the button level so the UX is consistent.
     if (_loading) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
@@ -47,22 +50,15 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     final fullName = _nameCtrl.text.trim();
 
     setState(() => _loading = true);
-    try {
-      await ref.read(authProvider.notifier).register(
-            username,
-            email,
-            password,
-            fullName.isNotEmpty ? fullName : null,
-          );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: Colors.red),
+    // Errors are surfaced through `ref.listen(authProvider, ...)` in build()
+    // — duplicating in a try/catch produces two snackbars.
+    await ref.read(authProvider.notifier).register(
+          username,
+          email,
+          password,
+          fullName.isNotEmpty ? fullName : null,
         );
-      }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+    if (mounted) setState(() => _loading = false);
   }
 
   @override
@@ -70,6 +66,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     final auth = ref.watch(authProvider);
     final isBusy = _loading || auth.status == AuthStatus.loading;
 
+    final scheme = Theme.of(context).colorScheme;
     ref.listen<AuthState>(authProvider, (_, state) {
       if (state.status == AuthStatus.authenticated) {
         context.go('/survey');
@@ -77,7 +74,10 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       final err = state.error;
       if (err != null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyErrorMessage(err)), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(friendlyErrorMessage(err)),
+            backgroundColor: scheme.error,
+          ),
         );
       }
     });
@@ -85,7 +85,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppSpacing.xl),
           child: AutofillGroup(
             child: Form(
               key: _formKey,
@@ -93,19 +93,19 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const SizedBox(height: 40),
+                  const SizedBox(height: AppSpacing.xxxl - AppSpacing.sm),
                   Text(
                     'إنشاء حساب',
                     style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   Text(
                     'أنشئ حسابك وابدأ تحويل الصوت إلى نص',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: AppSpacing.xxl),
                   TextFormField(
                     controller: _nameCtrl,
                     decoration: const InputDecoration(labelText: 'الاسم الكامل', prefixIcon: Icon(Icons.badge_outlined)),
@@ -151,7 +151,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       return null;
                     },
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppSpacing.md),
                   TextFormField(
                     controller: _passwordCtrl,
                     obscureText: _obscure,
@@ -161,6 +161,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       prefixIcon: const Icon(Icons.lock_outline),
                       suffixIcon: IconButton(
                         icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility),
+                        tooltip: _obscure ? 'إظهار كلمة السر' : 'إخفاء كلمة السر',
                         onPressed: () => setState(() => _obscure = !_obscure),
                       ),
                       helperText: '10 أحرف على الأقل',
@@ -173,7 +174,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       return null;
                     },
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppSpacing.md),
                   TextFormField(
                     controller: _passwordConfirmCtrl,
                     obscureText: _obscureConfirm,
@@ -183,6 +184,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       prefixIcon: const Icon(Icons.lock_outline),
                       suffixIcon: IconButton(
                         icon: Icon(_obscureConfirm ? Icons.visibility_off : Icons.visibility),
+                        tooltip: _obscureConfirm ? 'إظهار كلمة السر' : 'إخفاء كلمة السر',
                         onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
                       ),
                     ),
@@ -194,16 +196,16 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       return null;
                     },
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: AppSpacing.xl),
                   ElevatedButton(
                     onPressed: isBusy ? null : _register,
                     child: isBusy
                         ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                         : const Text('إنشاء حساب'),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: AppSpacing.xl),
                   const SocialAuthButtons(),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [

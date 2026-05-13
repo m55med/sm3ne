@@ -49,7 +49,7 @@ class _SurveyScreenState extends ConsumerState<SurveyScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(friendlyErrorMessage(e)),
-          backgroundColor: Colors.red,
+          backgroundColor: Theme.of(context).colorScheme.error,
           action: SnackBarAction(
             label: 'إعادة',
             textColor: Colors.white,

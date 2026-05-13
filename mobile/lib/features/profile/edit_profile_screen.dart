@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/api/api_client.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
@@ -96,7 +97,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               Center(
                 child: Text(
                   '@${user?.username ?? ''}',
-                  style: TextStyle(color: Colors.grey.shade600),
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
               ),
               const SizedBox(height: 24),
@@ -127,11 +128,11 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               _ReadOnlyRow(label: 'تسجيل الدخول عبر', value: _providerLabel(user?.authProvider)),
               if (_error != null) ...[
                 const SizedBox(height: 12),
-                _Banner(text: _error!, color: Colors.red),
+                _Banner(text: _error!, color: Theme.of(context).colorScheme.error),
               ],
               if (_success != null) ...[
                 const SizedBox(height: 12),
-                _Banner(text: _success!, color: Colors.green),
+                _Banner(text: _success!, color: context.brand.successGreen),
               ],
               const SizedBox(height: 24),
               FilledButton.icon(
@@ -169,16 +170,17 @@ class _ReadOnlyRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Container(
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.grey.shade100,
+        color: scheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         children: [
-          Text(label, style: TextStyle(color: Colors.grey.shade700)),
+          Text(label, style: TextStyle(color: scheme.onSurfaceVariant)),
           const Spacer(),
           Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
         ],

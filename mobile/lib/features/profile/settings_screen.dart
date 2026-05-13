@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
 import 'package:bisawtak/data/repositories/profile_repository.dart';
 import 'package:bisawtak/main.dart';
@@ -26,6 +27,8 @@ class SettingsScreen extends ConsumerWidget {
     final themeMode = ref.watch(themeModeProvider);
     final locale = ref.watch(localeProvider);
     final versionAsync = ref.watch(_appVersionProvider);
+    final scheme = Theme.of(context).colorScheme;
+    final chevron = Icon(forwardChevron(context));
 
     return Scaffold(
       appBar: AppBar(title: const Text('الإعدادات')),
@@ -36,6 +39,7 @@ class SettingsScreen extends ConsumerWidget {
             leading: const Icon(Icons.palette),
             title: const Text('المظهر'),
             subtitle: Text(_themeLabel(themeMode)),
+            trailing: chevron,
             onTap: () => _showThemeDialog(context, ref, themeMode),
           ),
           const Divider(height: 1),
@@ -44,6 +48,7 @@ class SettingsScreen extends ConsumerWidget {
             leading: const Icon(Icons.language),
             title: const Text('اللغة'),
             subtitle: Text(_languageLabel(locale)),
+            trailing: chevron,
             onTap: () => _showLanguageDialog(context, ref, locale),
           ),
           const Divider(height: 1),
@@ -51,15 +56,24 @@ class SettingsScreen extends ConsumerWidget {
           ListTile(
             leading: const Icon(Icons.lock_outline),
             title: const Text('تغيير كلمة السر'),
-            trailing: const Icon(Icons.chevron_right),
+            trailing: chevron,
             onTap: () => context.push('/forgot-password'),
+          ),
+          const Divider(height: 1),
+          // Telegram link
+          ListTile(
+            leading: const Icon(Icons.telegram, color: Color(0xFF229ED9)),
+            title: const Text('ربط مع تيليجرام'),
+            subtitle: const Text('استقبل تفريغ الفويس على تيليجرام'),
+            trailing: chevron,
+            onTap: () => context.push('/telegram'),
           ),
           const Divider(height: 1),
           // About
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('عن التطبيق'),
-            trailing: const Icon(Icons.chevron_right),
+            trailing: chevron,
             onTap: () => context.push('/about'),
           ),
           const Divider(height: 1),
@@ -76,18 +90,18 @@ class SettingsScreen extends ConsumerWidget {
           const Divider(height: 1),
           // Logout
           ListTile(
-            leading: const Icon(Icons.logout, color: Colors.red),
-            title: const Text('تسجيل الخروج', style: TextStyle(color: Colors.red)),
+            leading: Icon(Icons.logout, color: scheme.error),
+            title: Text('تسجيل الخروج', style: TextStyle(color: scheme.error)),
             onTap: () => _confirmLogout(context, ref),
           ),
           const Divider(height: 1),
           // Delete account (destructive)
           ListTile(
-            leading: const Icon(Icons.delete_forever, color: Colors.red),
-            title: const Text('حذف الحساب نهائياً', style: TextStyle(color: Colors.red)),
+            leading: Icon(Icons.delete_forever, color: scheme.error),
+            title: Text('حذف الحساب نهائياً', style: TextStyle(color: scheme.error)),
             onTap: () => _confirmDeleteAccount(context, ref),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: AppSpacing.xl),
         ],
       ),
     );
@@ -165,7 +179,10 @@ class SettingsScreen extends ConsumerWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(friendlyErrorMessage(e)),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
         );
       }
     }

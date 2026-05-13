@@ -47,22 +47,27 @@ class _ConnectivityBannerState extends State<ConnectivityBanner> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       children: [
         AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           height: _offline ? 28 : 0,
-          color: Colors.red.shade700,
+          color: scheme.error,
           alignment: Alignment.center,
           child: _offline
-              ? const Row(
+              ? Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.wifi_off, color: Colors.white, size: 14),
-                    SizedBox(width: 6),
+                    Icon(Icons.wifi_off, color: scheme.onError, size: 14),
+                    const SizedBox(width: 6),
                     Text(
                       'لا يوجد اتصال بالإنترنت',
-                      style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                      style: TextStyle(
+                        color: scheme.onError,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ],
                 )

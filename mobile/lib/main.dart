@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -77,12 +78,22 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
   /// Validates an incoming shared-file path against the app sandbox + allowed
   /// extensions before pushing it into [sharedFileProvider]. Untrusted paths
   /// — anything containing `..` or pointing outside the sandbox — are dropped
-  /// silently to defuse path-traversal vectors.
+  /// silently to defuse path-traversal vectors. Failures are logged in debug
+  /// builds so we can diagnose why a share from a new platform was rejected.
   Future<void> _acceptSharedPath(String path) async {
-    if (path.isEmpty || path.contains('..')) return;
-    if (!hasAllowedAudioExtension(path)) return;
+    if (path.isEmpty || path.contains('..')) {
+      if (kDebugMode) debugPrint('share-receiver: rejected (empty/traversal): "$path"');
+      return;
+    }
+    if (!hasAllowedAudioExtension(path)) {
+      if (kDebugMode) debugPrint('share-receiver: rejected (unsupported extension): "$path"');
+      return;
+    }
     final allowed = await isPathInsideSandbox(path);
-    if (!allowed) return;
+    if (!allowed) {
+      if (kDebugMode) debugPrint('share-receiver: rejected (outside sandbox): "$path"');
+      return;
+    }
     if (!mounted) return;
     ref.read(sharedFileProvider.notifier).state = path;
   }

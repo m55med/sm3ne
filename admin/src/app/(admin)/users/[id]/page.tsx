@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { getCurrentAdminId } from "@/lib/auth";
@@ -21,7 +22,8 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { toast } from "@/components/toast";
 import { PLAN_LABEL, SUBSCRIPTION_SOURCE_LABEL } from "@/lib/labels";
 import { formatDateTime, formatNumber } from "@/lib/format";
-import type { UserDetail, SessionItem, PlanAdminItem } from "@/lib/types";
+import { Textarea } from "@/components/ui/textarea";
+import type { UserDetail, SessionItem, PlanAdminItem, TelegramUserItem } from "@/lib/types";
 
 const PLATFORM_ICON: Record<string, string> = {
   ios: "🍎",
@@ -349,6 +351,9 @@ export default function UserDetailPage() {
         </Card>
       </div>
 
+      {/* تيليجرام — مربوط أو غير مربوط */}
+      <TelegramSection userId={user.id} />
+
       {/* الجلسات */}
       <Card id="sessions" className="p-6">
         <h2 className="text-lg font-bold mb-4">الجلسات (آخر {formatNumber(sessions.length)})</h2>
@@ -515,5 +520,143 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
       <span className="text-gray-500">{label}</span>
       <span>{value}</span>
     </div>
+  );
+}
+
+function TelegramSection({ userId }: { userId: number }) {
+  const [link, setLink] = useState<TelegramUserItem | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendText, setSendText] = useState("");
+  const [sendBusy, setSendBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api<TelegramUserItem | null>(`/admin/telegram/users-by-app-user/${userId}`);
+      setLink(r);
+    } catch {
+      // 503 = Telegram not configured. Quietly hide the section.
+      setLink(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function doSend() {
+    if (!link || !sendText.trim()) return;
+    setSendBusy(true);
+    try {
+      const r = await api<{ sent: boolean; error: string | null }>(
+        `/admin/telegram/users/${link.id}/message`,
+        { method: "POST", body: JSON.stringify({ text: sendText }) },
+      );
+      if (r.sent) {
+        toast.success("تم إرسال الرسالة");
+        setSendOpen(false);
+        setSendText("");
+      } else {
+        toast.error(r.error || "تعذّر الإرسال");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذّر الإرسال");
+    } finally {
+      setSendBusy(false);
+    }
+  }
+
+  if (loading) return null;
+  if (!link) {
+    return (
+      <Card className="p-6">
+        <h2 className="text-lg font-bold mb-2">💬 تيليجرام</h2>
+        <p className="text-sm text-gray-500">المستخدم لم يربط حساب تيليجرام بعد.</p>
+      </Card>
+    );
+  }
+
+  const display = (link.first_name || link.last_name)
+    ? `${link.first_name || ""} ${link.last_name || ""}`.trim()
+    : link.username
+      ? `@${link.username}`
+      : `#${link.telegram_id}`;
+
+  return (
+    <>
+      <Card className="p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold">💬 تيليجرام</h2>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => setSendOpen(true)} disabled={link.is_blocked}>
+              إرسال رسالة
+            </Button>
+            <Link href="/telegram" className="text-xs text-blue-600 hover:underline flex items-center">
+              صفحة تيليجرام ←
+            </Link>
+          </div>
+        </div>
+        <div className="space-y-3 text-sm">
+          <Row label="الاسم" value={display} />
+          {link.username && (
+            <Row label="@username" value={<span dir="ltr">@{link.username}</span>} />
+          )}
+          <Row label="Telegram ID" value={<span dir="ltr">{link.telegram_id}</span>} />
+          {link.bio && <Row label="البايو" value={<span className="text-xs text-gray-600">{link.bio}</span>} />}
+          <Row
+            label="الحالة"
+            value={
+              link.is_blocked ? (
+                <Badge variant="destructive">حاظر البوت</Badge>
+              ) : (
+                <Badge variant="default">مربوط</Badge>
+              )
+            }
+          />
+          {link.linked_at && <Row label="تاريخ الربط" value={formatDateTime(link.linked_at)} />}
+          {link.last_interaction_at && (
+            <Row label="آخر تفاعل" value={formatDateTime(link.last_interaction_at)} />
+          )}
+        </div>
+      </Card>
+
+      <Dialog
+        open={sendOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSendOpen(false);
+            setSendText("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>إرسال رسالة عبر تيليجرام</DialogTitle>
+            <DialogDescription>إلى {display}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="tg-send-text">نص الرسالة</Label>
+            <Textarea
+              id="tg-send-text"
+              value={sendText}
+              onChange={(e) => setSendText(e.target.value)}
+              rows={6}
+              maxLength={4096}
+              placeholder="اكتب الرسالة... (Markdown مدعوم)"
+            />
+            <div className="text-xs text-gray-400 text-end">{sendText.length} / 4096</div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSendOpen(false)} disabled={sendBusy}>
+              إلغاء
+            </Button>
+            <Button onClick={doSend} disabled={sendBusy || !sendText.trim()}>
+              {sendBusy ? "جاري الإرسال..." : "إرسال"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

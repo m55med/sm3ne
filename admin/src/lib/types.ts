@@ -279,6 +279,55 @@ export interface ProviderUsageRemote {
   total_hours_month: number;
 }
 
+// -- Telegram bot ----------------------------------------------------------
+
+export interface TelegramUserItem {
+  id: number;
+  telegram_id: number;
+  first_name: string | null;
+  last_name: string | null;
+  username: string | null;
+  language_code: string | null;
+  is_premium: boolean;
+  is_blocked: boolean;
+  bio: string | null;
+  photo_url: string | null;
+  linked_user_id: number | null;
+  linked_user_username: string | null;
+  linked_user_public_id: string | null;
+  linked_at: string | null;
+  last_interaction_at: string | null;
+  created_at: string;
+}
+
+export interface TelegramUserListResponse {
+  items: TelegramUserItem[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface TelegramBotMessageItem {
+  key: string;
+  description: string | null;
+  text_ar: string;
+  default_text: string;
+  is_default: boolean;
+  updated_at: string | null;
+  updated_by_user_id: number | null;
+}
+
+export interface TelegramWebhookInfo {
+  configured: boolean;
+  url: string | null;
+  pending_update_count: number | null;
+  last_error_date: string | null;
+  last_error_message: string | null;
+  bot_username: string | null;
+}
+
+export type TelegramAudience = "all" | "linked_only" | "unlinked_only" | "selected";
+
 export interface ProviderUsage {
   provider: TranscriptionProvider;
   free_tier_label: string | null;

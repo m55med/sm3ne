@@ -225,6 +225,17 @@ async def delete_account(
     db.query(ApiKey).filter(ApiKey.user_id == user.id).update(
         {"is_active": False}, synchronize_session=False
     )
+    # Telegram: clear the link so the bot row remains in our DB (for the
+    # admin's "all Telegram users" page) but no longer points at the
+    # now-deleted app account. The user can re-link a fresh app account later.
+    try:
+        from app.db.models import TelegramUser
+        db.query(TelegramUser).filter(TelegramUser.linked_user_id == user.id).update(
+            {"linked_user_id": None, "linked_at": None},
+            synchronize_session=False,
+        )
+    except Exception:  # noqa: BLE001 — telegram table may be missing in legacy deployments
+        pass
     db.query(UserSubscription).filter(
         UserSubscription.user_id == user.id, UserSubscription.is_active == True,
     ).update({"is_active": False}, synchronize_session=False)
