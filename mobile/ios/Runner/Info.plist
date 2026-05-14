@@ -75,7 +75,19 @@
 			<key>CFBundleURLName</key>
 			<string>com.bisawtak.bisawtak</string>
 		</dict>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.189277247383-tuai3fio03ut1p4g1vi4pp3673evkbp1</string>
+			</array>
+			<key>CFBundleURLName</key>
+			<string>google-signin</string>
+		</dict>
 	</array>
+	<!-- Google Sign-In: iOS OAuth client ID. google_sign_in reads this when
+	     no GoogleService-Info.plist is present (we don't use Firebase). -->
+	<key>GIDClientID</key>
+	<string>189277247383-tuai3fio03ut1p4g1vi4pp3673evkbp1.apps.googleusercontent.com</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

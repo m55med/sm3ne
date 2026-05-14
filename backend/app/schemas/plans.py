@@ -36,3 +36,19 @@ class SubscribeRequest(BaseModel):
 
 class CouponApplyRequest(BaseModel):
     code: str
+
+
+class CouponValidateRequest(BaseModel):
+    code: str
+    plan_id: Optional[int] = None
+
+
+class CouponValidationResponse(BaseModel):
+    """Read-only preview of what a coupon would grant — does NOT redeem it."""
+    valid: bool
+    code: str
+    plan_id: int
+    plan_name: str
+    duration_days: int          # -1 = permanent
+    is_permanent: bool
+    message: str

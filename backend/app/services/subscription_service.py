@@ -180,11 +180,21 @@ def subscribe_user(
     ).update({"is_active": False})
 
     now = datetime.now(timezone.utc)
+    # expires_at resolution:
+    #   - free plan          → None (free never expires)
+    #   - duration_days == -1 → None (PERMANENT subscription — coupons issued to
+    #                            deaf users so premium features stay free for life)
+    #   - otherwise          → now + duration_days
+    if plan.name == "free" or duration_days == -1:
+        expires_at = None
+    else:
+        expires_at = now + timedelta(days=duration_days)
+
     sub = UserSubscription(
         user_id=user_id,
         plan_id=plan_id,
         starts_at=now,
-        expires_at=now + timedelta(days=duration_days) if plan.name != "free" else None,
+        expires_at=expires_at,
         is_active=True,
         coupon_id=coupon_id,
     )

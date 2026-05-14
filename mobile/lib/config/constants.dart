@@ -11,6 +11,16 @@ class AppConstants {
   // Free plan limit (in seconds) for free users
   static const int freeMaxSeconds = 30;
 
+  // Google Sign-In — the WEB OAuth client ID. Passed to GoogleSignIn as
+  // `serverClientId` so the returned idToken's `aud` claim matches what the
+  // backend verifies against (GOOGLE_CLIENT_ID env var). NOT the iOS/Android
+  // client IDs — those are matched automatically by bundle id / package+SHA.
+  static const String googleServerClientId = String.fromEnvironment(
+    'GOOGLE_SERVER_CLIENT_ID',
+    defaultValue:
+        '189277247383-hl6a00rppttpbrbk7v1mmm7e8tqfpa1g.apps.googleusercontent.com',
+  );
+
   // Upload limits / allowed file types
   static const int maxUploadBytes = 200 * 1024 * 1024; // 200 MB
   static const Set<String> allowedAudioExtensions = {

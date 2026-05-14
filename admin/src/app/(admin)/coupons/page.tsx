@@ -9,7 +9,7 @@ import { RefreshButton } from "@/components/refresh-button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { toast } from "@/components/toast";
 import { formatDate, formatNumber } from "@/lib/format";
-import type { Coupon } from "@/lib/types";
+import type { Coupon, PaginatedResponse } from "@/lib/types";
 
 export default function CouponsPage() {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
@@ -17,8 +17,9 @@ export default function CouponsPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
-    const data = await api<Coupon[]>("/admin/coupons");
-    setCoupons(data);
+    // /admin/coupons returns a paginated envelope: { coupons, total, page, per_page }
+    const data = await api<PaginatedResponse<Coupon>>("/admin/coupons");
+    setCoupons(data.coupons || []);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -81,7 +82,13 @@ export default function CouponsPage() {
                 <tr key={c.id} className="border-b last:border-0">
                   <td className="py-3 font-mono font-bold">{c.code}</td>
                   <td className="py-3"><Badge variant="secondary">Plan #{c.plan_id}</Badge></td>
-                  <td className="py-3">{formatNumber(c.duration_days)}</td>
+                  <td className="py-3">
+                    {c.duration_days === -1 ? (
+                      <Badge variant="default" className="bg-blue-600">دائم ♾️</Badge>
+                    ) : (
+                      formatNumber(c.duration_days)
+                    )}
+                  </td>
                   <td className="py-3">{formatNumber(c.times_used)}/{c.max_uses === -1 ? "∞" : formatNumber(c.max_uses)}</td>
                   <td className="py-3"><Badge variant={c.is_active ? "default" : "destructive"}>{c.is_active ? "نشط" : "معطل"}</Badge></td>
                   <td className="py-3 text-gray-500 text-xs">{formatDate(c.created_at)}</td>

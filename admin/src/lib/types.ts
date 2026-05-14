@@ -82,6 +82,7 @@ export interface PaginatedResponse<T> {
   per_page: number;
   users?: T[];
   requests?: T[];
+  coupons?: T[];
 }
 
 export type RequestSource =

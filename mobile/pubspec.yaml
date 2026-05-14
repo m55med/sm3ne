@@ -55,6 +55,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 # TEMPORARY WORKAROUND:
 # record_linux's latest version has an API mismatch with the shared
@@ -72,3 +73,22 @@ flutter:
     - assets/images/
     - assets/icons/
     - assets/lottie/
+
+# App launcher icons. Regenerate after changing assets/icon/* with:
+#   dart run flutter_launcher_icons
+flutter_launcher_icons:
+  image_path: "assets/icon/icon.png"
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  min_sdk_android: 21
+  adaptive_icon_background: "assets/icon/icon_background.png"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"
+  web:
+    generate: true
+    image_path: "assets/icon/icon.png"
+    background_color: "#4A90D9"
+    theme_color: "#4A90D9"
+  macos:
+    generate: true
+    image_path: "assets/icon/icon.png"

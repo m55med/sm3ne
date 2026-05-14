@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'package:bisawtak/config/constants.dart';
 import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
@@ -73,9 +74,12 @@ class SocialAuthButtons extends ConsumerWidget {
 
   Future<void> _googleSignIn(BuildContext context, WidgetRef ref) async {
     try {
-      // TODO Mobile-2: serverClientId must come from AppConstants (e.g. AppConstants.googleServerClientId)
-      // so the backend can verify the audience of the ID token.
-      final googleUser = await GoogleSignIn(scopes: ['email']).signIn();
+      // serverClientId = the WEB OAuth client. It makes the returned idToken's
+      // `aud` claim equal the backend's GOOGLE_CLIENT_ID so verification passes.
+      final googleUser = await GoogleSignIn(
+        scopes: const ['email'],
+        serverClientId: AppConstants.googleServerClientId,
+      ).signIn();
       if (googleUser == null) {
         // User dismissed the system sheet. Show a neutral confirmation
         // instead of staying silent — silence reads as "the app froze".

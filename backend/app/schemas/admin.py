@@ -185,7 +185,11 @@ class CouponCreate(BaseModel):
     # silently break — easier to canonicalize once at the schema boundary.
     code: str = Field(min_length=4, max_length=50, pattern=r"^[A-Z0-9_-]+$")
     plan_id: int
-    duration_days: int = Field(default=30, ge=1, le=3650)
+    # duration_days = how long the SUBSCRIPTION lasts once the coupon is redeemed.
+    #   1..3650 → fixed duration in days
+    #   -1      → PERMANENT subscription (never expires) — used for coupons
+    #             issued to deaf users so premium stays free for life.
+    duration_days: int = Field(default=30, ge=-1, le=3650)
     max_uses: int = Field(default=-1, ge=-1)
     expires_at: Optional[datetime] = None
 
@@ -196,6 +200,14 @@ class CouponCreate(BaseModel):
         # "PROMO10" and passes the [A-Z0-9_-] regex instead of being 422'd.
         if isinstance(v, str):
             return v.strip().upper()
+        return v
+
+    @field_validator("duration_days")
+    @classmethod
+    def _no_zero_duration(cls, v):
+        # ge=-1 would also let 0 through; 0 days is a meaningless subscription.
+        if v == 0:
+            raise ValueError("duration_days must be -1 (permanent) or >= 1")
         return v
 
 

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'package:bisawtak/config/constants.dart';
 import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/api/api_client.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
@@ -141,7 +142,10 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
 
   Future<String?> _freshGoogleToken() async {
     try {
-      final account = await GoogleSignIn(scopes: const ['email']).signIn();
+      final account = await GoogleSignIn(
+        scopes: const ['email'],
+        serverClientId: AppConstants.googleServerClientId,
+      ).signIn();
       if (account == null) return null;
       final auth = await account.authentication;
       return auth.idToken;

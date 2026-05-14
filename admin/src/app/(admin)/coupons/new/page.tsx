@@ -10,21 +10,32 @@ import { toast } from "@/components/toast";
 import { PLAN_LABEL } from "@/lib/labels";
 import type { Plan } from "@/lib/types";
 
+// Coupons exist for ONE purpose: giving deaf users free access to the paid
+// plans. "Permanent" coupons (duration_days = -1) grant a subscription that
+// never expires — the intended default for that audience.
+function randomCode(prefix = "HEARING"): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous 0/O/1/I
+  let s = "";
+  for (let i = 0; i < 5; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return `${prefix}-${s}`;
+}
+
+type DurationMode = "permanent" | "fixed";
+
 export default function NewCouponPage() {
   const router = useRouter();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [code, setCode] = useState("");
-  // نبدأ بـ 0 ثم نُحدِّث لأول باقة غير مجانية بعد جلب القائمة
   const [planId, setPlanId] = useState(0);
-  const [durationDays, setDurationDays] = useState(30);
-  const [maxUses, setMaxUses] = useState(-1);
+  const [durationMode, setDurationMode] = useState<DurationMode>("permanent");
+  const [durationDays, setDurationDays] = useState(365);
+  const [maxUses, setMaxUses] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     api<Plan[]>("/plans").then((data) => {
       setPlans(data);
-      // اختيار أول باقة غير مجانية
       const firstPaid = data.find((p) => p.name !== "free");
       if (firstPaid) setPlanId(firstPaid.id);
     });
@@ -34,17 +45,22 @@ export default function NewCouponPage() {
     e.preventDefault();
     setError("");
 
-    // التحقق من الحقول الرقمية قبل الإرسال
+    if (!code.trim() || code.trim().length < 4) {
+      setError("رمز الكوبون يجب أن يكون 4 أحرف على الأقل");
+      return;
+    }
     if (!planId || !Number.isFinite(planId)) {
       setError("اختر باقة صحيحة");
       return;
     }
-    if (!Number.isFinite(durationDays) || durationDays < 1) {
+    const resolvedDuration =
+      durationMode === "permanent" ? -1 : Math.trunc(durationDays);
+    if (durationMode === "fixed" && (!Number.isFinite(durationDays) || durationDays < 1)) {
       setError("مدة الاشتراك يجب أن تكون رقماً صحيحاً ≥ 1");
       return;
     }
     if (!Number.isFinite(maxUses) || (maxUses !== -1 && maxUses < 1)) {
-      setError("حد الاستخدام يجب أن يكون -1 أو رقماً ≥ 1");
+      setError("حد الاستخدام يجب أن يكون -1 (بلا حد) أو رقماً ≥ 1");
       return;
     }
 
@@ -52,7 +68,12 @@ export default function NewCouponPage() {
     try {
       await api("/admin/coupons", {
         method: "POST",
-        body: JSON.stringify({ code, plan_id: planId, duration_days: durationDays, max_uses: maxUses }),
+        body: JSON.stringify({
+          code: code.trim(),
+          plan_id: planId,
+          duration_days: resolvedDuration,
+          max_uses: maxUses,
+        }),
       });
       toast.success("تم إنشاء الكوبون");
       router.push("/coupons");
@@ -63,23 +84,49 @@ export default function NewCouponPage() {
     }
   }
 
+  const selectedPlan = plans.find((p) => p.id === planId);
+
   return (
-    <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">إنشاء كوبون جديد</h1>
-      <Card className="p-6 max-w-lg">
-        <form onSubmit={handleSubmit} className="space-y-4">
+    <div className="max-w-2xl">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">إنشاء كوبون جديد</h1>
+        <p className="text-sm text-gray-500 mt-1">
+          الكوبونات تُمنح لذوي الإعاقة السمعية لتفعيل الباقات المدفوعة مجاناً.
+        </p>
+      </div>
+
+      <Card className="p-6">
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* رمز الكوبون */}
           <div>
             <Label htmlFor="coupon-code">رمز الكوبون</Label>
-            <Input
-              id="coupon-code"
-              name="code"
-              value={code}
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-              placeholder="HEARING2026"
-              required
-              className="font-mono"
-            />
+            <div className="flex gap-2 mt-1">
+              <Input
+                id="coupon-code"
+                name="code"
+                value={code}
+                onChange={(e) =>
+                  setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ""))
+                }
+                placeholder="HEARING-AB3K9"
+                required
+                className="font-mono"
+                dir="ltr"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCode(randomCode())}
+              >
+                توليد
+              </Button>
+            </div>
+            <p className="text-xs text-gray-400 mt-1">
+              أحرف إنجليزية كبيرة وأرقام و <span dir="ltr">- _</span> فقط، 4 أحرف على الأقل.
+            </p>
           </div>
+
+          {/* الباقة */}
           <div>
             <Label htmlFor="coupon-plan">الباقة</Label>
             <select
@@ -87,47 +134,124 @@ export default function NewCouponPage() {
               name="plan_id"
               value={planId}
               onChange={(e) => setPlanId(Number(e.target.value))}
-              className="w-full border rounded-lg px-3 py-2 text-sm"
+              className="mt-1 w-full border rounded-lg px-3 py-2 text-sm bg-transparent"
             >
-              {plans.filter(p => p.name !== "free").map((p) => (
-                <option key={p.id} value={p.id}>
-                  {PLAN_LABEL[p.name] || p.name} — {p.price}
-                </option>
-              ))}
+              {plans
+                .filter((p) => p.name !== "free")
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {PLAN_LABEL[p.name] || p.name}
+                  </option>
+                ))}
             </select>
+            <p className="text-xs text-gray-400 mt-1">
+              المزايا التي سيحصل عليها المستخدم عند تفعيل الكوبون.
+            </p>
           </div>
+
+          {/* نوع الاشتراك */}
           <div>
-            <Label htmlFor="coupon-duration">مدة الاشتراك (أيام)</Label>
-            <Input
-              id="coupon-duration"
-              name="duration_days"
-              type="number"
-              value={durationDays}
-              onChange={(e) => {
-                const v = e.target.value === "" ? NaN : Number(e.target.value);
-                setDurationDays(v);
-              }}
-              min={1}
-            />
+            <Label>نوع الاشتراك</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">
+              <button
+                type="button"
+                onClick={() => setDurationMode("permanent")}
+                className={`text-right rounded-xl border-2 p-3 transition ${
+                  durationMode === "permanent"
+                    ? "border-blue-600 bg-blue-50"
+                    : "border-gray-200 hover:border-blue-300"
+                }`}
+              >
+                <div className="font-bold text-gray-900 text-sm">دائم — لا ينتهي ♾️</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  الباقة تفضل مفعّلة للأبد. الخيار المناسب لذوي الإعاقة السمعية.
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDurationMode("fixed")}
+                className={`text-right rounded-xl border-2 p-3 transition ${
+                  durationMode === "fixed"
+                    ? "border-blue-600 bg-blue-50"
+                    : "border-gray-200 hover:border-blue-300"
+                }`}
+              >
+                <div className="font-bold text-gray-900 text-sm">مدة محددة 📅</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  الباقة تفضل مفعّلة لعدد أيام محدد ثم تنتهي.
+                </div>
+              </button>
+            </div>
           </div>
+
+          {/* مدة الاشتراك — تظهر فقط للمدة المحددة */}
+          {durationMode === "fixed" && (
+            <div>
+              <Label htmlFor="coupon-duration">مدة الاشتراك (أيام)</Label>
+              <Input
+                id="coupon-duration"
+                name="duration_days"
+                type="number"
+                value={Number.isFinite(durationDays) ? durationDays : ""}
+                onChange={(e) =>
+                  setDurationDays(e.target.value === "" ? NaN : Number(e.target.value))
+                }
+                min={1}
+                className="mt-1"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                عدد الأيام التي تظل فيها الباقة مفعّلة بعد التفعيل.
+              </p>
+            </div>
+          )}
+
+          {/* حد الاستخدام */}
           <div>
-            <Label htmlFor="coupon-max-uses">حد الاستخدام (-1 = بلا حد)</Label>
+            <Label htmlFor="coupon-max-uses">حد الاستخدام</Label>
             <Input
               id="coupon-max-uses"
               name="max_uses"
               type="number"
-              value={maxUses}
-              onChange={(e) => {
-                const v = e.target.value === "" ? NaN : Number(e.target.value);
-                setMaxUses(v);
-              }}
+              value={Number.isFinite(maxUses) ? maxUses : ""}
+              onChange={(e) =>
+                setMaxUses(e.target.value === "" ? NaN : Number(e.target.value))
+              }
               min={-1}
+              className="mt-1"
             />
+            <p className="text-xs text-gray-400 mt-1">
+              كم شخص يقدر يستخدم الكوبون. <span dir="ltr">1</span> = شخص واحد فقط،
+              <span dir="ltr"> -1</span> = بلا حد.
+            </p>
           </div>
+
+          {/* ملخّص */}
+          <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm text-gray-600">
+            <span className="font-semibold text-gray-800">ملخّص: </span>
+            الكوبون{" "}
+            <span className="font-mono font-bold" dir="ltr">
+              {code || "—"}
+            </span>{" "}
+            يفعّل باقة{" "}
+            <b>{selectedPlan ? PLAN_LABEL[selectedPlan.name] || selectedPlan.name : "—"}</b>{" "}
+            {durationMode === "permanent" ? (
+              <b className="text-blue-700">بشكل دائم</b>
+            ) : (
+              <>لمدة <b>{Number.isFinite(durationDays) ? durationDays : "—"} يوم</b></>
+            )}
+            ، ويُستخدَم{" "}
+            <b>{maxUses === -1 ? "بلا حد" : `${maxUses} مرة`}</b>.
+          </div>
+
           {error && <p className="text-red-500 text-sm">{error}</p>}
+
           <div className="flex gap-3">
-            <Button type="submit" disabled={loading}>{loading ? "جاري الإنشاء..." : "إنشاء الكوبون"}</Button>
-            <Button type="button" variant="outline" onClick={() => router.back()}>إلغاء</Button>
+            <Button type="submit" disabled={loading}>
+              {loading ? "جاري الإنشاء..." : "إنشاء الكوبون"}
+            </Button>
+            <Button type="button" variant="outline" onClick={() => router.back()}>
+              إلغاء
+            </Button>
           </div>
         </form>
       </Card>
