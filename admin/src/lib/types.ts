@@ -84,10 +84,19 @@ export interface PaginatedResponse<T> {
   requests?: T[];
 }
 
+export type RequestSource =
+  | "upload"
+  | "recording"
+  | "share"
+  | "api"
+  | "telegram";
+
 export interface RequestItem {
   id: number;
   user_public_id: string | null;
   username: string;
+  api_key_id: number | null;
+  api_key_name: string | null;
   filename: string | null;
   duration_seconds: number;
   processed_seconds: number;
@@ -101,6 +110,10 @@ export interface RequestItem {
   daily_used: number;
   daily_limit: number;
   monthly_limit: number | null;
+  // Origin of the request — closed set, telegram stamped server-side.
+  source: RequestSource;
+  is_live_recording: boolean;
+  provider_used: string | null;
   created_at: string;
 }
 

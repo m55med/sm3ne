@@ -39,6 +39,31 @@ const SOURCE_LABEL: Record<RequestItem["plan_source"], string> = {
   purchase: "مدفوع",
 };
 
+// Origin of each transcription request. The set is closed on the backend
+// (FartAPI rejects anything else with 422), and `telegram` is stamped
+// server-side — so a client cannot forge its origin. We still surface it
+// prominently so abuse patterns (e.g. a flood of `api` requests from one key)
+// are visible at a glance.
+const REQUEST_SOURCE_META: Record<
+  RequestItem["source"],
+  { label: string; icon: string; variant: "default" | "secondary" | "outline" | "destructive" }
+> = {
+  upload: { label: "التطبيق — رفع", icon: "📤", variant: "outline" },
+  recording: { label: "التطبيق — تسجيل", icon: "🎙️", variant: "outline" },
+  share: { label: "التطبيق — مشاركة", icon: "🔗", variant: "outline" },
+  api: { label: "API", icon: "🔑", variant: "secondary" },
+  telegram: { label: "تيليجرام", icon: "💬", variant: "default" },
+};
+
+const SOURCE_FILTERS: { value: string; label: string }[] = [
+  { value: "", label: "كل المصادر" },
+  { value: "upload", label: "التطبيق — رفع" },
+  { value: "recording", label: "التطبيق — تسجيل" },
+  { value: "share", label: "التطبيق — مشاركة" },
+  { value: "api", label: "API" },
+  { value: "telegram", label: "تيليجرام" },
+];
+
 function truncateError(msg: string | null | undefined): string | undefined {
   if (!msg) return undefined;
   // Trim and limit to MAX_ERROR_MSG chars. Strip newlines so tooltip stays tidy.
@@ -52,6 +77,7 @@ export default function RequestsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [langFilter, setLangFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
   const debouncedLang = useDebouncedValue(langFilter, 400);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
@@ -65,6 +91,7 @@ export default function RequestsPage() {
       per_page: String(PER_PAGE),
     });
     if (debouncedLang) params.set("language", debouncedLang);
+    if (sourceFilter) params.set("source", sourceFilter);
     try {
       const r = await api<PaginatedResponse<RequestItem>>(
         `/admin/requests?${params}`
@@ -78,7 +105,7 @@ export default function RequestsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, debouncedLang]);
+  }, [page, debouncedLang, sourceFilter]);
 
   // Mark typing when input value diverges from debounced value
   useEffect(() => {
@@ -122,6 +149,21 @@ export default function RequestsPage() {
               className="max-w-xs"
               dir="ltr"
             />
+            <select
+              value={sourceFilter}
+              onChange={(e) => {
+                setSourceFilter(e.target.value);
+                setPage(1);
+              }}
+              className="h-9 rounded-lg border border-input bg-transparent px-2.5 text-sm"
+              aria-label="فلتر حسب المصدر"
+            >
+              {SOURCE_FILTERS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
             <span className="text-sm text-gray-500">
               <span dir="ltr">{formatNumber(total)}</span> طلب
             </span>
@@ -173,6 +215,7 @@ export default function RequestsPage() {
                   <tr className="border-b text-gray-500">
                     <th className="text-right pb-3">#</th>
                     <th className="text-right pb-3">الحالة</th>
+                    <th className="text-right pb-3">المصدر</th>
                     <th className="text-right pb-3 sticky end-0 bg-white z-10">
                       المستخدم
                     </th>
@@ -211,6 +254,36 @@ export default function RequestsPage() {
                           >
                             {statusMeta.label}
                           </Badge>
+                        </td>
+                        <td className="py-3">
+                          {(() => {
+                            const sm =
+                              REQUEST_SOURCE_META[r.source] ||
+                              REQUEST_SOURCE_META.upload;
+                            return (
+                              <div className="flex flex-col gap-1 items-start">
+                                <Badge variant={sm.variant} title={`source=${r.source}`}>
+                                  {sm.icon} {sm.label}
+                                </Badge>
+                                {r.source === "api" && r.api_key_name && (
+                                  <span
+                                    className="text-[10px] text-gray-400 font-mono"
+                                    dir="ltr"
+                                  >
+                                    {r.api_key_name}
+                                  </span>
+                                )}
+                                {r.provider_used && (
+                                  <span
+                                    className="text-[10px] text-gray-400"
+                                    dir="ltr"
+                                  >
+                                    {r.provider_used}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="py-3 font-medium sticky end-0 bg-white z-10">
                           {r.user_public_id ? (

@@ -39,6 +39,7 @@ next-env.d.ts
 deploy.sh
 deploy.*.sh
 *.deploy.sh
+manual-deploy/
 secrets/
 *.pem
 *.key

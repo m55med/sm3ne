@@ -456,6 +456,7 @@ async def list_requests(
     user_id: Optional[int] = None,
     api_key_id: Optional[int] = None,
     language: Optional[str] = None,
+    source: Optional[str] = None,
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
@@ -466,6 +467,8 @@ async def list_requests(
         q = q.filter(TranscriptionRequest.api_key_id == api_key_id)
     if language:
         q = q.filter(TranscriptionRequest.language == language)
+    if source:
+        q = q.filter(TranscriptionRequest.source == source)
 
     total = q.count()
     reqs = q.order_by(TranscriptionRequest.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
@@ -502,6 +505,9 @@ async def list_requests(
             daily_used=r.daily_used_at_request if r.daily_used_at_request is not None else 0,
             daily_limit=r.daily_limit_at_request if r.daily_limit_at_request is not None else 0,
             monthly_limit=r.monthly_limit_at_request,
+            source=r.source or "upload",
+            is_live_recording=bool(r.is_live_recording),
+            provider_used=r.provider_used,
             created_at=r.created_at,
         ))
 

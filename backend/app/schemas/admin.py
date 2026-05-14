@@ -162,6 +162,13 @@ class RequestListItem(BaseModel):
     daily_used: int = 0
     daily_limit: int = 0
     monthly_limit: Optional[int] = None
+    # Origin of the request — answers "where did this come from?":
+    #   upload | recording | share | api | telegram
+    # The set is closed (FastAPI/Pydantic reject anything else with 422), and
+    # `telegram` is stamped server-side, so an attacker can't forge the origin.
+    source: str = "upload"
+    is_live_recording: bool = False
+    provider_used: Optional[str] = None
     created_at: datetime
 
 
