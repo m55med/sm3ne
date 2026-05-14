@@ -127,7 +127,19 @@ SMTP_PASS = os.getenv("SMTP_PASS", "")
 SMTP_FROM = os.getenv("SMTP_FROM", "noreply@bisawtak.com")
 
 # Social Auth
+# GOOGLE_CLIENT_ID is the primary (Web) OAuth client — used as the
+# `serverClientId` by the mobile app. But a Google ID token's `aud` claim can
+# legitimately be ANY of our platform client IDs (Web / iOS / Android)
+# depending on the SDK flow. Per Google's official guidance we verify the
+# token's `aud` against the full set of OUR client IDs. Extra IDs are supplied
+# comma-separated in GOOGLE_CLIENT_IDS_EXTRA (iOS + Android client IDs).
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+_google_extra = os.getenv("GOOGLE_CLIENT_IDS_EXTRA", "")
+GOOGLE_CLIENT_IDS = {
+    cid.strip()
+    for cid in ([GOOGLE_CLIENT_ID] + _google_extra.split(","))
+    if cid.strip()
+}
 APPLE_TEAM_ID = os.getenv("APPLE_TEAM_ID", "").strip()
 APPLE_KEY_ID = os.getenv("APPLE_KEY_ID", "").strip()
 APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID", "").strip()

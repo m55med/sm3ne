@@ -6,13 +6,16 @@ occur — callers can rely on a non-None return meaning "verified".
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Optional
 
 import httpx
 from fastapi import HTTPException, status
 
-from app.core.config import APPLE_CLIENT_ID, GOOGLE_CLIENT_ID
+from app.core.config import APPLE_CLIENT_ID, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_IDS
+
+logger = logging.getLogger(__name__)
 
 
 _VALID_GOOGLE_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
@@ -45,8 +48,16 @@ async def verify_google_token(token: str) -> dict | None:
 
     data = resp.json()
 
-    # aud MUST match our client id exactly.
-    if data.get("aud") != GOOGLE_CLIENT_ID:
+    # aud MUST be one of OUR Google client IDs. A multi-platform app's ID
+    # tokens can carry the Web, iOS or Android client id in `aud` depending on
+    # the SDK flow — Google's own guidance is to accept the full set of your
+    # own client ids, never a single hard-coded one.
+    aud = data.get("aud")
+    if not aud or aud not in GOOGLE_CLIENT_IDS:
+        logger.warning(
+            "google token rejected: aud=%r not in our client ids %s",
+            aud, sorted(GOOGLE_CLIENT_IDS),
+        )
         return None
     # iss MUST be one of Google's documented issuers.
     if data.get("iss") not in _VALID_GOOGLE_ISSUERS:

@@ -611,14 +611,27 @@ async def delete_coupon(
     coupon = db.query(Coupon).filter(Coupon.id == coupon_id).first()
     if not coupon:
         raise HTTPException(404, "Coupon not found")
-    coupon.is_active = False
+    code = coupon.code
+    # Hard-delete when the coupon was never redeemed. If it is still referenced
+    # by a subscription (FK), fall back to deactivation to preserve history.
+    referenced = db.query(UserSubscription.id).filter(UserSubscription.coupon_id == coupon_id).first()
+    if referenced:
+        coupon.is_active = False
+        db.commit()
+        _safe_audit(
+            db, action="admin.coupon.delete", actor_user_id=admin.id,
+            target_type="coupon", target_id=coupon_id,
+            metadata={"code": code, "mode": "deactivated"},
+        )
+        return {"message": "Coupon deactivated"}
+    db.delete(coupon)
     db.commit()
     _safe_audit(
         db, action="admin.coupon.delete", actor_user_id=admin.id,
-        target_type="coupon", target_id=coupon.id,
-        metadata={"code": coupon.code},
+        target_type="coupon", target_id=coupon_id,
+        metadata={"code": code, "mode": "deleted"},
     )
-    return {"message": "Coupon deactivated"}
+    return {"message": "Coupon deleted"}
 
 
 # --- Plans ---
