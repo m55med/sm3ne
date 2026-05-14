@@ -216,6 +216,8 @@ export default function RequestsPage() {
                     <th className="text-right pb-3">#</th>
                     <th className="text-right pb-3">الحالة</th>
                     <th className="text-right pb-3">المصدر</th>
+                    <th className="text-right pb-3">النموذج</th>
+                    <th className="text-right pb-3">الزمن</th>
                     <th className="text-right pb-3 sticky end-0 bg-white z-10">
                       المستخدم
                     </th>
@@ -273,17 +275,50 @@ export default function RequestsPage() {
                                     {r.api_key_name}
                                   </span>
                                 )}
-                                {r.provider_used && (
-                                  <span
-                                    className="text-[10px] text-gray-400"
-                                    dir="ltr"
-                                  >
-                                    {r.provider_used}
-                                  </span>
-                                )}
                               </div>
                             );
                           })()}
+                        </td>
+                        {/* النموذج المستخدم: المزوّد + الموديل الفعلي */}
+                        <td className="py-3">
+                          {r.provider_used ? (
+                            <div className="flex flex-col gap-0.5 items-start">
+                              <Badge variant="secondary" className="text-[10px]">
+                                <span dir="ltr">{r.provider_used}</span>
+                              </Badge>
+                              {r.model_used && (
+                                <span
+                                  className="text-[10px] text-gray-400 font-mono"
+                                  dir="ltr"
+                                  title={r.model_used}
+                                >
+                                  {r.model_used}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </td>
+                        {/* الزمن المستغرق (request → response) */}
+                        <td className="py-3" dir="ltr">
+                          {r.latency_ms != null ? (
+                            <span
+                              className={
+                                r.latency_ms > 15000
+                                  ? "text-red-600 font-medium"
+                                  : r.latency_ms > 6000
+                                    ? "text-amber-600"
+                                    : "text-gray-700"
+                              }
+                            >
+                              {r.latency_ms < 1000
+                                ? `${r.latency_ms}ms`
+                                : `${(r.latency_ms / 1000).toFixed(1)}s`}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
                         </td>
                         <td className="py-3 font-medium sticky end-0 bg-white z-10">
                           {r.user_public_id ? (

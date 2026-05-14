@@ -10,6 +10,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:bisawtak/config/constants.dart';
 import 'package:bisawtak/config/design_tokens.dart';
+import 'package:bisawtak/core/analytics/analytics_service.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
 
@@ -89,6 +90,9 @@ class SocialAuthButtons extends ConsumerWidget {
       final auth = await googleUser.authentication;
       if (auth.idToken != null) {
         await ref.read(authProvider.notifier).googleSignIn(auth.idToken!);
+        if (ref.read(authProvider).status == AuthStatus.authenticated) {
+          await ref.read(analyticsProvider).login('google');
+        }
       } else {
         if (context.mounted) {
           _error(context, 'تعذر الحصول على بيانات الحساب من Google');
@@ -124,6 +128,9 @@ class SocialAuthButtons extends ConsumerWidget {
       await ref
           .read(authProvider.notifier)
           .appleSignIn(identityToken, nonce: rawNonce);
+      if (ref.read(authProvider).status == AuthStatus.authenticated) {
+        await ref.read(analyticsProvider).login('apple');
+      }
     } on SignInWithAppleAuthorizationException catch (e) {
       // The Apple SDK throws a typed exception on cancel/cancelled. Surface
       // a neutral message rather than the technical error.

@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:bisawtak/config/design_tokens.dart';
+import 'package:bisawtak/core/analytics/analytics_service.dart';
 import 'package:bisawtak/data/repositories/transcription_repository.dart';
 import 'package:bisawtak/data/models/transcription.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
@@ -236,6 +237,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       _isProcessing = true;
       _uploadProgress = 0;
     });
+    final analytics = ref.read(analyticsProvider);
+    await analytics.transcriptionStarted(source);
     try {
       final transcription = await ref.read(transcriptionRepoProvider).transcribeFile(
         path,
@@ -246,11 +249,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           setState(() => _uploadProgress = (sent / total).clamp(0.0, 1.0));
         },
       );
+      await analytics.transcriptionCompleted(
+        source: source,
+        durationSeconds: transcription.duration.round(),
+        wordCount: transcription.wordCount,
+      );
       if (mounted) {
         Haptics.success();
         _showResult(transcription);
       }
     } catch (e) {
+      await analytics.transcriptionFailed(source);
       Haptics.error();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

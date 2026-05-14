@@ -115,6 +115,8 @@ export interface RequestItem {
   source: RequestSource;
   is_live_recording: boolean;
   provider_used: string | null;
+  model_used: string | null;
+  latency_ms: number | null;
   created_at: string;
 }
 
@@ -277,6 +279,9 @@ export interface TranscriptionProviderSetting {
   updated_at: string | null;
   updated_by_user_id: number | null;
   providers: TranscriptionProviderInfo[];
+  // Auto-failover priority — highest priority first. When the active provider
+  // fails mid-request, the backend walks this list to the next one.
+  provider_order: TranscriptionProvider[];
 }
 
 export interface ProviderUsageLocal {

@@ -169,6 +169,8 @@ class RequestListItem(BaseModel):
     source: str = "upload"
     is_live_recording: bool = False
     provider_used: Optional[str] = None
+    model_used: Optional[str] = None
+    latency_ms: Optional[int] = None
     created_at: datetime
 
 

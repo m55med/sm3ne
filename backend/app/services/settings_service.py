@@ -18,7 +18,12 @@ from app.db.models import AppSetting
 
 
 KEY_TRANSCRIPTION_PROVIDER = "transcription_provider"
+KEY_PROVIDER_ORDER = "transcription_provider_order"
 VALID_PROVIDERS = ("whisper", "speechmatics", "gemini", "groq", "assemblyai")
+
+# Default failover priority when the admin hasn't customized the order.
+# whisper is last on purpose — it's the always-available local safety net.
+DEFAULT_PROVIDER_ORDER = ("speechmatics", "gemini", "groq", "assemblyai", "whisper")
 
 # Cache entries expire after this many seconds. Short enough that multi-worker
 # setups feel near-real-time after an admin change; long enough that the hot
@@ -126,3 +131,37 @@ def set_provider_model(
     if provider not in VALID_PROVIDERS:
         raise ValueError(f"Invalid provider '{provider}'")
     return set_setting(db, _model_key(provider), model, user_id=user_id)
+
+
+def get_provider_order(db: Session) -> list[str]:
+    """Admin-configured failover priority. When a provider fails mid-request
+    (credit exhausted, rate-limited, 5xx), the dispatcher walks this list to
+    pick the next provider to try.
+
+    Stored as a comma-separated string. Always returns every valid provider:
+    any provider missing from the stored value is appended at the end so a
+    newly-added provider is never silently unreachable.
+    """
+    raw = get_setting(db, KEY_PROVIDER_ORDER, default=None)
+    if raw:
+        order = [p.strip() for p in raw.split(",") if p.strip() in VALID_PROVIDERS]
+    else:
+        order = list(DEFAULT_PROVIDER_ORDER)
+    # Append any valid provider not present (e.g. one added after the setting
+    # was last saved) so the failover chain stays exhaustive.
+    for p in VALID_PROVIDERS:
+        if p not in order:
+            order.append(p)
+    return order
+
+
+def set_provider_order(
+    db: Session, order: list[str], user_id: int | None = None
+) -> AppSetting:
+    cleaned = [p for p in order if p in VALID_PROVIDERS]
+    if not cleaned:
+        raise ValueError("Provider order must contain at least one valid provider")
+    # De-duplicate while preserving order.
+    seen: set[str] = set()
+    deduped = [p for p in cleaned if not (p in seen or seen.add(p))]
+    return set_setting(db, KEY_PROVIDER_ORDER, ",".join(deduped), user_id=user_id)

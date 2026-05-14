@@ -2,11 +2,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:bisawtak/config/l10n/app_localizations.dart';
 import 'package:bisawtak/config/theme.dart';
 import 'package:bisawtak/config/routes.dart';
+import 'package:bisawtak/core/analytics/analytics_service.dart';
 import 'package:bisawtak/features/share_receiver/share_handler_screen.dart';
 import 'package:bisawtak/shared/utils/sandbox_paths.dart';
 
@@ -17,6 +21,24 @@ final sharedFileProvider = StateProvider<String?>((ref) => null);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Firebase — Analytics + Crashlytics. Wrapped in try/catch so a Firebase
+  // hiccup (e.g. missing config in a misbuilt flavour) can never block app
+  // startup; analytics is best-effort, the app must still run without it.
+  AnalyticsService? analytics;
+  try {
+    await Firebase.initializeApp();
+    // Route uncaught Flutter + platform errors to Crashlytics.
+    FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+    PlatformDispatcher.instance.onError = (error, stack) {
+      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+      return true;
+    };
+    analytics = AnalyticsService(FirebaseAnalytics.instance);
+    await analytics.appOpened();
+  } catch (e) {
+    if (kDebugMode) debugPrint('Firebase init failed (continuing without it): $e');
+  }
 
   final prefs = await SharedPreferences.getInstance();
   final savedTheme = prefs.getString('theme_mode');
@@ -31,6 +53,8 @@ void main() async {
       }),
       if (savedLocale != null)
         localeProvider.overrideWith((ref) => Locale(savedLocale)),
+      if (analytics != null)
+        analyticsProvider.overrideWithValue(analytics),
     ],
     child: const BisawtakApp(),
   ));

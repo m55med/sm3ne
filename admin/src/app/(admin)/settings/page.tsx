@@ -28,6 +28,7 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [pending, setPending] = useState<TranscriptionProvider | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
 
   const load = useCallback(async () => {
     const [s, u] = await Promise.all([
@@ -97,6 +98,33 @@ export default function SettingsPage() {
       toast.error(`فشل الحفظ: ${msg}`);
     } finally {
       setSavingModel(null);
+    }
+  }
+
+  // Reorder the failover priority and persist it. `delta` is -1 (move up =
+  // higher priority) or +1 (move down).
+  async function moveInOrder(index: number, delta: number) {
+    if (!setting || savingOrder) return;
+    const order = [...setting.provider_order];
+    const target = index + delta;
+    if (target < 0 || target >= order.length) return;
+    [order[index], order[target]] = [order[target], order[index]];
+    setSavingOrder(true);
+    setError(null);
+    try {
+      const data = await api<TranscriptionProviderSetting>(
+        "/admin/settings/transcription-provider/order",
+        { method: "PUT", body: JSON.stringify({ order }) }
+      );
+      setSetting(data);
+      setSavedAt(Date.now());
+      toast.success("تم حفظ ترتيب الأولوية");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "حدث خطأ غير معروف";
+      setError(msg);
+      toast.error(`فشل الحفظ: ${msg}`);
+    } finally {
+      setSavingOrder(false);
     }
   }
 
@@ -190,6 +218,72 @@ export default function SettingsPage() {
             )}
           </p>
         )}
+      </Card>
+
+      {/* Auto-failover priority order */}
+      <Card className="p-6 mb-6">
+        <div className="mb-3">
+          <h2 className="text-lg font-bold text-gray-900">
+            ترتيب التبديل التلقائي (Auto-failover)
+          </h2>
+          <p className="text-sm text-gray-500 mt-1">
+            لو المزوّد النشط فشل أثناء الطلب (الكريدت خلص، rate-limit، خطأ سيرفر)
+            — النظام ينتقل تلقائياً للمزوّد اللي بعده في الترتيب ده. الطلب
+            مايفشلش إلا لو <b>كل</b> المزوّدين فشلوا.
+          </p>
+        </div>
+        <ol className="space-y-2">
+          {setting.provider_order.map((name, i) => {
+            const info = setting.providers.find((p) => p.name === name);
+            const available = info?.available ?? false;
+            return (
+              <li
+                key={name}
+                className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${
+                  available
+                    ? "border-gray-200 bg-white"
+                    : "border-gray-200 bg-gray-50 opacity-60"
+                }`}
+              >
+                <span className="w-6 h-6 shrink-0 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">
+                  {i + 1}
+                </span>
+                <span className="flex-1 font-medium text-gray-800">
+                  {labelFor(name)}
+                </span>
+                {!available && (
+                  <Badge variant="outline" className="text-gray-500">
+                    غير مُعدّ
+                  </Badge>
+                )}
+                <div className="flex gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={i === 0 || savingOrder}
+                    onClick={() => moveInOrder(i, -1)}
+                    aria-label="رفع الأولوية"
+                  >
+                    ↑
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={i === setting.provider_order.length - 1 || savingOrder}
+                    onClick={() => moveInOrder(i, 1)}
+                    aria-label="خفض الأولوية"
+                  >
+                    ↓
+                  </Button>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+        <p className="text-xs text-gray-400 mt-3">
+          رقم 1 = الأعلى أولوية. المزوّدين &quot;غير مُعدّ&quot; بيتم تخطّيهم
+          تلقائياً في السلسلة.
+        </p>
       </Card>
 
       <Card className="p-6">

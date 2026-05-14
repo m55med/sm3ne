@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:bisawtak/config/design_tokens.dart';
+import 'package:bisawtak/core/analytics/analytics_service.dart';
 import 'package:bisawtak/core/api/api_client.dart';
 import 'package:bisawtak/features/auth/forgot_password_screen.dart';
 import 'package:bisawtak/features/auth/login_screen.dart';
@@ -30,8 +31,12 @@ import 'package:bisawtak/main.dart';
 import 'package:bisawtak/shared/utils/sandbox_paths.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
+  // Firebase Analytics screen-view tracking. Null when Firebase is disabled
+  // (init failed) — we just don't attach an observer in that case.
+  final analyticsObserver = ref.read(analyticsProvider).observer;
   final router = GoRouter(
     initialLocation: '/splash',
+    observers: [if (analyticsObserver != null) analyticsObserver],
     // Unknown routes / shared file URLs are routed to /home. File paths
     // arriving via the URI are validated for sandbox containment before
     // we forward them to the shared-file provider.

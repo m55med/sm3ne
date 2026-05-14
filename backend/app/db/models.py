@@ -138,6 +138,11 @@ class TranscriptionRequest(Base):
     # Which transcription backend served this request — used by the admin usage panel
     # to bill/credit each provider separately. Older rows are backfilled to 'whisper'.
     provider_used = Column(String(20), nullable=True, index=True)
+    # The specific sub-model the provider used (e.g. 'whisper-large-v3-turbo',
+    # 'gemini-flash-latest', 'enhanced'). Null for legacy rows.
+    model_used = Column(String(80), nullable=True)
+    # Wall-clock time spent in the transcription dispatch (provider call), ms.
+    latency_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     user = relationship("User", back_populates="transcription_requests")

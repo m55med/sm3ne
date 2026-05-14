@@ -38,11 +38,20 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
-    # Force every pod to match our app's minimum target. Many transitive pods
-    # ship with deployment targets older than iOS 13 which triggers Xcode warnings
-    # and can fail App Store submission validation.
     target.build_configurations.each do |config|
+      # Force every pod to match our app's minimum target. Many transitive pods
+      # ship with deployment targets older than iOS 13 which triggers Xcode
+      # warnings and can fail App Store submission validation.
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+
+      # permission_handler 12.x compiles OUT every permission by default — each
+      # one must be explicitly enabled via a preprocessor macro, otherwise
+      # `Permission.microphone.request()` returns "denied" WITHOUT ever showing
+      # the iOS system prompt. We only use the microphone.
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
+        '$(inherited)',
+        'PERMISSION_MICROPHONE=1',
+      ]
     end
   end
 end

@@ -28,9 +28,9 @@ from app.schemas.api_keys import (
     ApiKeyCreateResponse, ApiKeyResponse, ApiKeyUpdateRequest,
 )
 from app.schemas.settings import (
-    ModelOption, ProviderInfo, ProviderModelUpdateRequest, ProviderTestResponse,
-    TranscriptionProviderResponse, TranscriptionProviderUpdateRequest,
-    TranscriptionProviderUsageResponse,
+    ModelOption, ProviderInfo, ProviderModelUpdateRequest, ProviderOrderUpdateRequest,
+    ProviderTestResponse, TranscriptionProviderResponse,
+    TranscriptionProviderUpdateRequest, TranscriptionProviderUsageResponse,
 )
 from app.services.subscription_service import get_user_plan, subscribe_user
 from app.services import audit_service, settings_service, transcription_service, usage_service
@@ -508,6 +508,8 @@ async def list_requests(
             source=r.source or "upload",
             is_live_recording=bool(r.is_live_recording),
             provider_used=r.provider_used,
+            model_used=r.model_used,
+            latency_ms=r.latency_ms,
             created_at=r.created_at,
         ))
 
@@ -1219,6 +1221,7 @@ def _build_provider_response(db: Session) -> TranscriptionProviderResponse:
         updated_at=row.updated_at if row else None,
         updated_by_user_id=row.updated_by_user_id if row else None,
         providers=providers,
+        provider_order=settings_service.get_provider_order(db),
     )
 
 
@@ -1293,6 +1296,29 @@ async def update_provider_model(
         db, action="admin.settings.update", actor_user_id=admin.id,
         target_type="setting",
         metadata={"key": "provider_model", "provider": body.provider, "model": body.model},
+    )
+    return _build_provider_response(db)
+
+
+@router.put(
+    "/settings/transcription-provider/order",
+    response_model=TranscriptionProviderResponse,
+)
+async def update_provider_order(
+    body: ProviderOrderUpdateRequest,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Set the auto-failover priority order. When the active provider fails
+    mid-request, the dispatcher walks this list to pick the next one to try."""
+    try:
+        settings_service.set_provider_order(db, list(body.order), user_id=admin.id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _safe_audit(
+        db, action="admin.settings.update", actor_user_id=admin.id,
+        target_type="setting",
+        metadata={"key": "provider_order", "order": list(body.order)},
     )
     return _build_provider_response(db)
 

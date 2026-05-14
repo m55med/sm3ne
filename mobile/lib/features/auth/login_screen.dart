@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bisawtak/config/design_tokens.dart';
+import 'package:bisawtak/core/analytics/analytics_service.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
 import 'package:bisawtak/features/auth/widgets/social_auth_buttons.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
@@ -63,6 +64,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // Errors are surfaced through `ref.listen(authProvider, ...)` in build()
     // — do not also catch here, that yields a double snackbar.
     await ref.read(authProvider.notifier).login(username, password);
+    if (ref.read(authProvider).status == AuthStatus.authenticated) {
+      await ref.read(analyticsProvider).login('password');
+    }
     if (mounted) setState(() => _loading = false);
   }
 

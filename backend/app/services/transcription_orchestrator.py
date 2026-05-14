@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -133,9 +134,17 @@ async def run_transcription(
             process_path = tmp_path
             process_duration = original_duration
 
-        result = await transcription_service.transcribe_from_path(
+        # transcribe_from_path auto-fails-over across providers and returns
+        # (result, provider_actually_used, model_actually_used). If a failover
+        # happened the real provider differs from what we stamped above — fix it.
+        _t0 = time.perf_counter()
+        result, actual_provider, actual_model = await transcription_service.transcribe_from_path(
             db, process_path, duration=process_duration, plan=plan
         )
+        req_log.latency_ms = int((time.perf_counter() - _t0) * 1000)
+        if actual_provider and actual_provider != req_log.provider_used:
+            req_log.provider_used = actual_provider
+        req_log.model_used = actual_model
     except HTTPException:
         # Bubble up cleanly — these are intentional (e.g. provider 4xx mapped).
         req_log.status = "failed"

@@ -6,6 +6,8 @@ plugins {
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    // Firebase — must come after the Android plugin.
+    id("com.google.gms.google-services")
 }
 
 // Load signing config from android/key.properties (not checked into git).
@@ -25,7 +27,10 @@ if (keystorePropertiesFile.exists()) {
 android {
     namespace = "com.bisawtak.bisawtak"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Pinned to the locally-installed NDK. Flutter's default (flutter.ndkVersion
+    // → 28.2.x) was failing to download reliably; 27.1.12297006 is already
+    // installed, complete, and compatible with our plugin set.
+    ndkVersion = "27.1.12297006"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

@@ -60,6 +60,8 @@ def _run_idempotent_ddl(db):
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS provider_used VARCHAR(20)",
         "UPDATE transcription_requests SET provider_used = 'whisper' WHERE provider_used IS NULL",
         "CREATE INDEX IF NOT EXISTS idx_requests_provider_created ON transcription_requests(provider_used, created_at)",
+        "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS model_used VARCHAR(80)",
+        "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS latency_ms INTEGER",
         "CREATE INDEX IF NOT EXISTS idx_requests_apikey_created ON transcription_requests(api_key_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_requests_status ON transcription_requests(status)",
         """CREATE TABLE IF NOT EXISTS account_deletions (

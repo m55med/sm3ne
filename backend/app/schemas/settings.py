@@ -30,10 +30,18 @@ class TranscriptionProviderResponse(BaseModel):
     updated_at: datetime | None = None
     updated_by_user_id: int | None = None
     providers: list[ProviderInfo]
+    # Auto-failover priority: when the active provider fails mid-request
+    # (credit exhausted, 429, 5xx...), the dispatcher walks this list.
+    provider_order: list[ProviderName] = []
 
 
 class TranscriptionProviderUpdateRequest(BaseModel):
     provider: ProviderName
+
+
+class ProviderOrderUpdateRequest(BaseModel):
+    """New failover priority order — full list, highest priority first."""
+    order: list[ProviderName]
 
 
 class ProviderUsageLocal(BaseModel):

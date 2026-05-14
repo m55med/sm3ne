@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bisawtak/config/design_tokens.dart';
+import 'package:bisawtak/core/analytics/analytics_service.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
 import 'package:bisawtak/data/repositories/plans_repository.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
@@ -119,6 +120,9 @@ class _PlansScreenState extends ConsumerState<PlansScreen> {
       }
       await ref.read(authProvider.notifier).checkAuth();
       await _refresh();
+      // Analytics: which plan a coupon unlocked (read after refresh).
+      final sub = ref.read(currentSubscriptionProvider).valueOrNull;
+      await ref.read(analyticsProvider).couponRedeemed(sub?.planName ?? 'unknown');
     } catch (e) {
       Haptics.error();
       if (mounted) setState(() => _couponError = couponErrorMessage(e));
@@ -152,6 +156,7 @@ class _PlansScreenState extends ConsumerState<PlansScreen> {
       }
       await ref.read(authProvider.notifier).checkAuth();
       await _refresh();
+      await ref.read(analyticsProvider).subscriptionCancelled();
     } catch (e) {
       Haptics.error();
       if (mounted) {
