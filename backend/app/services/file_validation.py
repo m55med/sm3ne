@@ -21,7 +21,7 @@ from fastapi import HTTPException
 # Extensions we accept on the route. Mirrors core.config.ALLOWED_EXTENSIONS but
 # duplicated here to keep this module importable without a circular dep.
 ALLOWED_EXTENSIONS = {
-    ".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm", ".mp4", ".aac", ".wma",
+    ".mp3", ".wav", ".m4a", ".ogg", ".opus", ".flac", ".webm", ".mp4", ".aac", ".wma",
 }
 
 

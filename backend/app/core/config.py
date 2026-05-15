@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 MODEL_NAME = os.getenv("WHISPER_MODEL", "large-v3")
 RATE_LIMIT = os.getenv("RATE_LIMIT", "10/minute")
 MAX_WORKERS = int(os.getenv("WORKERS", "3"))
-ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm", ".mp4", ".aac", ".wma"}
+ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".opus", ".flac", ".webm", ".mp4", ".aac", ".wma"}
 
 # Speechmatics (third-party ASR provider — much faster than local Whisper)
 SPEECHMATICS_API_KEY = os.getenv("SP", "").strip()

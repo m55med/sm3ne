@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "@/components/toaster";
@@ -7,7 +8,10 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { formatNumber } from "@/lib/format";
-import type { AnalyzeAudioResponse } from "@/lib/types";
+import type {
+  AnalyzeAudioResponse,
+  TranscriptionProviderSetting,
+} from "@/lib/types";
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "—";
@@ -39,6 +43,14 @@ const PUNCT_LABEL: Record<string, string> = {
   ellipsis: "نقاط متتابعة",
 };
 
+const PROVIDER_LABEL_AR: Record<string, string> = {
+  whisper: "Whisper (محلي)",
+  speechmatics: "Speechmatics",
+  gemini: "Gemini",
+  groq: "Groq",
+  assemblyai: "AssemblyAI",
+};
+
 export default function AnalyzePage() {
   return (
     <ErrorBoundary>
@@ -53,7 +65,31 @@ function AnalyzePageBody() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalyzeAudioResponse | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [setting, setSetting] = useState<TranscriptionProviderSetting | null>(
+    null,
+  );
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch the currently-configured provider/model so the admin can see what
+  // will be used BEFORE running an analysis. The actual response also returns
+  // these fields, but showing them upfront avoids "wait — what model did I
+  // just run this on?" surprises.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await api<TranscriptionProviderSetting>(
+          "/admin/settings/transcription-provider",
+        );
+        if (!cancelled) setSetting(s);
+      } catch {
+        // Non-fatal — banner just won't render.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Revoke the object URL whenever the file changes or component unmounts —
   // otherwise blob URLs leak memory across multiple uploads.
@@ -69,7 +105,7 @@ function AnalyzePageBody() {
 
   function pickFile(f: File | null) {
     if (!f) return;
-    if (!f.type.startsWith("audio/") && !/\.(mp3|wav|m4a|ogg|opus|flac|webm|aac)$/i.test(f.name)) {
+    if (!f.type.startsWith("audio/") && !/\.(mp3|wav|m4a|ogg|opus|flac|webm|aac|wma|mp4)$/i.test(f.name)) {
       toast.error("الملف ليس ملف صوتي صالح");
       return;
     }
@@ -118,6 +154,8 @@ function AnalyzePageBody() {
           ارفع ملفاً صوتياً وسيتم تحويله إلى نص وعرض إحصائيات تفصيلية عنه.
         </p>
       </header>
+
+      <ProviderBanner setting={setting} />
 
       <Card className="p-6">
         <label
@@ -192,6 +230,59 @@ function AnalyzePageBody() {
 
       {result && <Results result={result} />}
     </div>
+  );
+}
+
+function ProviderBanner({
+  setting,
+}: {
+  setting: TranscriptionProviderSetting | null;
+}) {
+  if (!setting) {
+    return (
+      <Card className="p-4">
+        <div className="h-5 w-64 animate-pulse bg-gray-100 rounded" />
+      </Card>
+    );
+  }
+  // The provider that will actually run when the admin hits "تحليل" — this
+  // accounts for the fallback when the chosen provider isn't configured.
+  const active = setting.providers.find((p) => p.name === setting.effective);
+  const modelId =
+    active?.selected_model || active?.default_model || active?.models[0]?.id || null;
+  const modelLabel = modelId
+    ? active?.models.find((m) => m.id === modelId)?.label || modelId
+    : null;
+  const fallback = setting.current !== setting.effective;
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <span className="text-sm text-gray-500">سيتم التحليل عبر</span>
+          <span className="text-sm font-bold text-gray-900">
+            {PROVIDER_LABEL_AR[setting.effective] || setting.effective}
+          </span>
+          {modelLabel && (
+            <span className="text-xs text-gray-600" dir="ltr">
+              · {modelLabel}
+            </span>
+          )}
+          {fallback && (
+            <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">
+              المُختار{" "}
+              <b>{PROVIDER_LABEL_AR[setting.current] || setting.current}</b>{" "}
+              غير مُعدّ — يُستخدم البديل
+            </span>
+          )}
+        </div>
+        <Link
+          href="/settings"
+          className="text-sm text-blue-600 hover:text-blue-700 underline"
+        >
+          تغيير المزود من الإعدادات
+        </Link>
+      </div>
+    </Card>
   );
 }
 
