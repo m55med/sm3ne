@@ -121,6 +121,22 @@ def _run_idempotent_ddl(db):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
         "CREATE INDEX IF NOT EXISTS idx_ticket_replies_ticket_created ON ticket_replies(ticket_id, created_at)",
+        # Support-ticket image attachments. File bytes live on disk under
+        # /app/uploads; this table only holds metadata + a stable public_id.
+        """CREATE TABLE IF NOT EXISTS ticket_attachments (
+            id SERIAL PRIMARY KEY,
+            public_id VARCHAR(12) UNIQUE NOT NULL,
+            ticket_id INTEGER NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+            reply_id INTEGER REFERENCES ticket_replies(id) ON DELETE CASCADE,
+            uploaded_by_user_id INTEGER NOT NULL REFERENCES users(id),
+            original_filename VARCHAR(255),
+            mime_type VARCHAR(80) NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            storage_path VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_ticket_attachments_ticket ON ticket_attachments(ticket_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_ticket_attachments_reply ON ticket_attachments(reply_id)",
         """CREATE TABLE IF NOT EXISTS app_settings (
             id SERIAL PRIMARY KEY,
             key VARCHAR(80) UNIQUE NOT NULL,

@@ -125,4 +125,50 @@ class SupportRepository {
           statusCode: e is DioException ? e.response?.statusCode : null);
     }
   }
+
+  /// Uploads an image attachment for the given ticket. The backend validates
+  /// size, extension, and magic bytes — we forward the raw file bytes and
+  /// rely on those checks rather than duplicating them here.
+  Future<Map<String, dynamic>> uploadAttachment({
+    required String publicId,
+    required String filePath,
+  }) async {
+    try {
+      final form = FormData.fromMap({
+        'file': await MultipartFile.fromFile(filePath),
+      });
+      final resp = await _dio.post(
+        '/support/tickets/$publicId/attachments',
+        data: form,
+        options: Options(
+          // Image uploads can take a moment on slow connections.
+          sendTimeout: const Duration(seconds: 60),
+          receiveTimeout: const Duration(seconds: 60),
+        ),
+      );
+      return Map<String, dynamic>.from(resp.data);
+    } catch (e) {
+      throw SupportException(friendlyErrorMessage(e),
+          statusCode: e is DioException ? e.response?.statusCode : null);
+    }
+  }
+
+  /// Fetches the raw bytes of an attachment. The endpoint requires Bearer
+  /// auth, so a plain `<img src=...>`-style approach won't work — the caller
+  /// builds an in-memory image from these bytes.
+  Future<List<int>> fetchAttachmentBytes({
+    required String ticketPublicId,
+    required String attachmentPublicId,
+  }) async {
+    try {
+      final resp = await _dio.get<List<int>>(
+        '/support/tickets/$ticketPublicId/attachments/$attachmentPublicId',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return resp.data ?? const [];
+    } catch (e) {
+      throw SupportException(friendlyErrorMessage(e),
+          statusCode: e is DioException ? e.response?.statusCode : null);
+    }
+  }
 }

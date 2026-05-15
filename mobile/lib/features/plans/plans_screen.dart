@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/analytics/analytics_service.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
@@ -484,6 +485,16 @@ class _RedeemView extends StatelessWidget {
                   ),
                 )
               : const Text('تفعيل الكوبون'),
+        ),
+        const SizedBox(height: AppSpacing.xl),
+        // Help link: deaf users sometimes get coupons via support, so a
+        // direct "contact us" hook lives here on the redeem view.
+        Center(
+          child: TextButton.icon(
+            onPressed: () => context.push('/contact'),
+            icon: const Icon(Icons.help_outline, size: 18),
+            label: const Text('تحتاج إلى مساعدة؟'),
+          ),
         ),
       ],
     );

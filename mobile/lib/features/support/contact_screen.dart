@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -253,6 +256,12 @@ class _NewTicketSheet extends ConsumerStatefulWidget {
   ConsumerState<_NewTicketSheet> createState() => _NewTicketSheetState();
 }
 
+// Mirrors the server-side defaults. Server still re-validates — this only
+// gives instant feedback so the user doesn't wait for an upload to fail.
+const _kMaxAttachmentBytes = 5 * 1024 * 1024;
+const _kMaxAttachments = 5;
+const _kAllowedExts = ['jpg', 'jpeg', 'png', 'webp', 'heic'];
+
 class _NewTicketSheetState extends ConsumerState<_NewTicketSheet> {
   final _formKey = GlobalKey<FormState>();
   final _subjectCtrl = TextEditingController();
@@ -260,12 +269,51 @@ class _NewTicketSheetState extends ConsumerState<_NewTicketSheet> {
   String _type = 'contact';
   bool _sending = false;
   String? _error;
+  final List<File> _attachments = [];
 
   @override
   void dispose() {
     _subjectCtrl.dispose();
     _messageCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickImages() async {
+    if (_sending) return;
+    if (_attachments.length >= _kMaxAttachments) {
+      setState(() => _error = 'الحد الأقصى $_kMaxAttachments صور');
+      return;
+    }
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: _kAllowedExts,
+        allowMultiple: true,
+        withData: false,
+      );
+      if (result == null) return;
+      final added = <File>[];
+      for (final f in result.files) {
+        if (f.path == null) continue;
+        final file = File(f.path!);
+        final size = await file.length();
+        if (size > _kMaxAttachmentBytes) {
+          setState(() => _error =
+              'الصورة "${f.name}" أكبر من ${_kMaxAttachmentBytes ~/ (1024 * 1024)} ميجا');
+          continue;
+        }
+        added.add(file);
+        if (_attachments.length + added.length >= _kMaxAttachments) break;
+      }
+      if (added.isNotEmpty) {
+        setState(() {
+          _attachments.addAll(added);
+          _error = null;
+        });
+      }
+    } catch (e) {
+      setState(() => _error = friendlyErrorMessage(e));
+    }
   }
 
   Future<void> _submit() async {
@@ -281,19 +329,49 @@ class _NewTicketSheetState extends ConsumerState<_NewTicketSheet> {
       // Route through the typed repository when subject/body are sufficient.
       // For ticket type metadata not yet supported by the repo, fall back to
       // direct API call.
+      String? publicId;
       if (_type == 'contact') {
-        await ref.read(supportRepositoryProvider).createTicket(
+        final ticket = await ref.read(supportRepositoryProvider).createTicket(
               subject: subject,
               body: message,
             );
+        publicId = ticket.publicId;
       } else {
-        await ref.read(apiClientProvider).dio.post('/support/tickets', data: {
+        final resp = await ref
+            .read(apiClientProvider)
+            .dio
+            .post('/support/tickets', data: {
           'ticket_type': _type,
           'subject': subject,
           'message': message,
         });
+        final data = resp.data;
+        if (data is Map) {
+          publicId = data['public_id']?.toString();
+        }
       }
-      if (mounted) Navigator.of(context).pop(true);
+
+      // Upload attachments sequentially. We tolerate per-image failures so a
+      // single bad image doesn't lose the ticket — but surface the count.
+      int failed = 0;
+      if (publicId != null && _attachments.isNotEmpty) {
+        final repo = ref.read(supportRepositoryProvider);
+        for (final f in _attachments) {
+          try {
+            await repo.uploadAttachment(publicId: publicId, filePath: f.path);
+          } catch (_) {
+            failed++;
+          }
+        }
+      }
+      if (mounted) {
+        if (failed > 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('تم إرسال التذكرة لكن فشل رفع $failed صورة')),
+          );
+        }
+        Navigator.of(context).pop(true);
+      }
     } catch (e) {
       setState(() {
         _error = friendlyErrorMessage(e);
@@ -353,6 +431,13 @@ class _NewTicketSheetState extends ConsumerState<_NewTicketSheet> {
                 enabled: !_sending,
                 validator: (v) => (v == null || v.trim().length < 5) ? 'الرسالة قصيرة جداً' : null,
               ),
+              const SizedBox(height: 12),
+              _AttachmentPicker(
+                files: _attachments,
+                disabled: _sending,
+                onAdd: _pickImages,
+                onRemove: (i) => setState(() => _attachments.removeAt(i)),
+              ),
               if (_error != null) ...[
                 const SizedBox(height: 12),
                 Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
@@ -369,6 +454,110 @@ class _NewTicketSheetState extends ConsumerState<_NewTicketSheet> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _AttachmentPicker extends StatelessWidget {
+  final List<File> files;
+  final bool disabled;
+  final VoidCallback onAdd;
+  final void Function(int index) onRemove;
+
+  const _AttachmentPicker({
+    required this.files,
+    required this.disabled,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            OutlinedButton.icon(
+              onPressed: disabled || files.length >= _kMaxAttachments ? null : onAdd,
+              icon: const Icon(Icons.image_outlined, size: 18),
+              label: const Text('إرفاق صور'),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              files.isEmpty
+                  ? 'اختياري (سكرين شوت)'
+                  : '${files.length}/$_kMaxAttachments',
+              style: TextStyle(fontSize: 12, color: muted),
+            ),
+          ],
+        ),
+        if (files.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 84,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: files.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (_, i) => _AttachmentThumb(
+                file: files[i],
+                onRemove: disabled ? null : () => onRemove(i),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _AttachmentThumb extends StatelessWidget {
+  final File file;
+  final VoidCallback? onRemove;
+
+  const _AttachmentThumb({required this.file, required this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 84,
+      height: 84,
+      child: Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.file(
+              file,
+              width: 84,
+              height: 84,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => Container(
+                color: Colors.grey.shade200,
+                child: const Icon(Icons.broken_image_outlined),
+              ),
+            ),
+          ),
+          if (onRemove != null)
+            Positioned(
+              top: 2,
+              right: 2,
+              child: Material(
+                color: Colors.black54,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: onRemove,
+                  child: const Padding(
+                    padding: EdgeInsets.all(2),
+                    child: Icon(Icons.close, size: 14, color: Colors.white),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

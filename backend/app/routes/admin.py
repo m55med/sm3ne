@@ -1,9 +1,14 @@
+import logging
+import os
+import tempfile
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+
+logger = logging.getLogger(__name__)
 
 from app.auth.api_key import generate_api_key
 from app.db.database import get_db
@@ -17,6 +22,7 @@ from app.schemas.admin import (
     SessionItem, UserUsageInfo, UserSubscriptionInfo, UserDetailResponse,
     AdminSubscribeRequest, SubscriptionLogItem, SubscriptionLogResponse,
     PlanSubscriberItem,
+    AnalyzeAudioResponse, AnalyzeFileInfo, AnalyzeWordCount, AnalyzeSegment,
 )
 from app.schemas.support import (
     AdminTicketSummary, AdminTicketListResponse,
@@ -34,6 +40,8 @@ from app.schemas.settings import (
 )
 from app.services.subscription_service import get_user_plan, subscribe_user
 from app.services import audit_service, settings_service, transcription_service, usage_service
+from app.services import text_analyzer
+from app.services.file_validation import validate_audio_upload
 
 
 def _safe_audit(db, **kwargs):
@@ -952,6 +960,27 @@ async def admin_get_ticket(
             return None
         return u.full_name or u.username
 
+    # Load attachments + group by reply (mirrors /support/tickets/{id} logic).
+    from app.db.models import TicketAttachment as _TA
+    from app.schemas.support import TicketAttachmentItem as _TAItem
+    atts = db.query(_TA).filter(_TA.ticket_id == t.id).order_by(_TA.created_at).all()
+    reply_public_ids = {r.id: r.public_id for r in replies}
+    on_msg: list = []
+    by_reply: dict[int, list] = {}
+    for a in atts:
+        item = _TAItem(
+            public_id=a.public_id,
+            reply_public_id=reply_public_ids.get(a.reply_id) if a.reply_id else None,
+            original_filename=a.original_filename,
+            mime_type=a.mime_type,
+            size_bytes=a.size_bytes,
+            created_at=a.created_at,
+        )
+        if a.reply_id is None:
+            on_msg.append(item)
+        else:
+            by_reply.setdefault(a.reply_id, []).append(item)
+
     reply_items = [
         TicketReplyItem(
             public_id=r.public_id,
@@ -959,6 +988,7 @@ async def admin_get_ticket(
             author_name=_name(r.user_id),
             message=r.message,
             created_at=r.created_at,
+            attachments=by_reply.get(r.id, []),
         ) for r in replies
     ]
     return TicketDetail(
@@ -970,8 +1000,38 @@ async def admin_get_ticket(
         message=t.message,
         status=t.status,
         replies=reply_items,
+        attachments=on_msg,
         created_at=t.created_at,
         updated_at=t.updated_at,
+    )
+
+
+@router.get("/tickets/{public_id}/attachments/{attachment_public_id}")
+async def admin_download_attachment(
+    public_id: str,
+    attachment_public_id: str,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin can view any attachment on any ticket (the user-facing endpoint
+    is owner-scoped — admins need this separate path)."""
+    from fastapi.responses import FileResponse
+    from app.db.models import TicketAttachment as _TA
+    from app.services import ticket_attachment_service as _tas
+    t = _load_ticket_by_public_id(db, public_id)
+    a = db.query(_TA).filter(
+        _TA.public_id == attachment_public_id,
+        _TA.ticket_id == t.id,
+    ).first()
+    if not a:
+        raise HTTPException(404, "Attachment not found")
+    path = _tas.attachment_disk_path(a)
+    if not path.exists():
+        raise HTTPException(404, "Attachment file missing from disk")
+    return FileResponse(
+        path=str(path),
+        media_type=a.mime_type,
+        filename=a.original_filename or f"{a.public_id}",
     )
 
 
@@ -1392,4 +1452,198 @@ async def test_transcription_provider(
         language=result.get("language"),
         word_count=len(text.split()) if text else 0,
         segment_count=len(segments),
+    )
+
+
+# --- Ticket attachment limits (admin) ---------------------------------------
+
+from pydantic import BaseModel as _BM, Field as _F
+
+
+class TicketAttachLimits(_BM):
+    """Admin-tunable caps for support-ticket image attachments."""
+    max_bytes: int = _F(..., ge=1, le=100 * 1024 * 1024)
+    allowed_extensions: list[str]
+
+
+class TicketAttachLimitsUpdate(_BM):
+    max_bytes: int | None = _F(default=None, ge=1, le=100 * 1024 * 1024)
+    allowed_extensions: list[str] | None = None
+
+
+@router.get("/settings/ticket-attachments", response_model=TicketAttachLimits)
+async def get_ticket_attach_limits(
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    return TicketAttachLimits(
+        max_bytes=settings_service.get_ticket_attach_max_bytes(db),
+        allowed_extensions=sorted(settings_service.get_ticket_attach_allowed_extensions(db)),
+    )
+
+
+@router.put("/settings/ticket-attachments", response_model=TicketAttachLimits)
+async def update_ticket_attach_limits(
+    body: TicketAttachLimitsUpdate,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    try:
+        if body.max_bytes is not None:
+            settings_service.set_ticket_attach_max_bytes(db, body.max_bytes, user_id=admin.id)
+        if body.allowed_extensions is not None:
+            settings_service.set_ticket_attach_allowed_extensions(
+                db, body.allowed_extensions, user_id=admin.id
+            )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return TicketAttachLimits(
+        max_bytes=settings_service.get_ticket_attach_max_bytes(db),
+        allowed_extensions=sorted(settings_service.get_ticket_attach_allowed_extensions(db)),
+    )
+
+
+# --- Admin audio analyzer ----------------------------------------------------
+# Admin-only inspection tool: upload an audio file, get the transcript + rich
+# linguistic stats. Does NOT touch the user's quota, does NOT create a
+# TranscriptionRequest row — it's a one-off diagnostic, not a billable action.
+
+_ANALYZE_MAX_BYTES = 100 * 1024 * 1024   # 100 MB
+_ANALYZE_CHUNK = 1024 * 1024
+
+
+async def _stream_admin_upload(file: UploadFile, suffix: str) -> tuple[str, bytes, int]:
+    """Stream the upload to a tmp file in 1 MiB chunks, capped at the admin
+    limit. Mirrors the safety properties of transcribe._stream_to_tmp but with
+    a tighter ceiling — admin diagnostics shouldn't be moving 200 MB files."""
+    advertised = getattr(file, "size", None)
+    if advertised is not None and advertised > _ANALYZE_MAX_BYTES:
+        raise HTTPException(413, {"error": "file_too_large", "limit_bytes": _ANALYZE_MAX_BYTES})
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    total = 0
+    head = b""
+    try:
+        with os.fdopen(fd, "wb") as out:
+            while True:
+                chunk = await file.read(_ANALYZE_CHUNK)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _ANALYZE_MAX_BYTES:
+                    out.close()
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    raise HTTPException(
+                        413, {"error": "file_too_large", "limit_bytes": _ANALYZE_MAX_BYTES})
+                if not head:
+                    head = chunk[:16]
+                out.write(chunk)
+    except HTTPException:
+        raise
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        logger.exception("admin upload streaming failed")
+        raise HTTPException(500, "Upload failed. Please try again.")
+    return tmp_path, head, total
+
+
+@router.post("/analyze-audio", response_model=AnalyzeAudioResponse)
+async def analyze_audio(
+    request: Request,
+    file: UploadFile = File(...),
+    provider: Optional[str] = Form(None),
+    model: Optional[str] = Form(None),
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Transcribe an audio file and return rich linguistic stats. Admin-only;
+    bypasses user quota and does not persist a request row."""
+    suffix = os.path.splitext(file.filename or ".wav")[1] or ".wav"
+    tmp_path, head, total_bytes = await _stream_admin_upload(file, suffix)
+
+    try:
+        validate_audio_upload(file.filename, file.content_type, head)
+    except HTTPException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+    try:
+        if provider:
+            # Admin asked for a specific provider — bypass failover so the
+            # response reflects what that provider actually returned.
+            result = await transcription_service.transcribe_with_provider(
+                tmp_path, provider=provider, model=model,
+            )
+            used_provider, used_model = provider, model
+        else:
+            result, used_provider, used_model = await transcription_service.transcribe_from_path(
+                db, tmp_path, plan=None, provider=None, model=None,
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("admin analyze-audio transcription failed")
+        raise HTTPException(502, "Transcription failed. Please try again.")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    base = text_analyzer.build_response(result)
+    extra = text_analyzer.extended_analysis(base["text"], base.get("duration", 0.0))
+
+    _safe_audit(
+        db,
+        actor_id=admin.id,
+        action="admin.analyze_audio",
+        target_type="audio",
+        target_id=None,
+        metadata={
+            "filename": file.filename,
+            "size_bytes": total_bytes,
+            "provider": used_provider,
+            "model": used_model,
+            "duration": base.get("duration", 0.0),
+            "word_count": extra["word_count"],
+        },
+    )
+
+    return AnalyzeAudioResponse(
+        file=AnalyzeFileInfo(
+            filename=file.filename or "audio",
+            content_type=file.content_type,
+            size_bytes=total_bytes,
+        ),
+        provider=used_provider,
+        model=used_model,
+        language=base["lang"],
+        language_name=base["lang_name"],
+        duration_seconds=base.get("duration", 0.0),
+        text=base["text"],
+        char_count=base["char_count"],
+        char_count_no_spaces=base["char_count_no_spaces"],
+        word_count=extra["word_count"],
+        unique_word_count=extra["unique_word_count"],
+        avg_word_length=extra["avg_word_length"],
+        longest_word=extra["longest_word"],
+        sentence_count=extra["sentence_count"],
+        paragraph_count=extra["paragraph_count"],
+        line_count=extra["line_count"],
+        segment_count=base["segment_count"],
+        speaking_rate_wpm=extra["speaking_rate_wpm"],
+        punctuation=base["punctuation_count"],
+        top_words=[AnalyzeWordCount(**w) for w in extra["top_words"]],
+        segments=[
+            AnalyzeSegment(id=s["id"], start=s["start"], end=s["end"], text=s["text"])
+            for s in base["segments"]
+        ],
     )

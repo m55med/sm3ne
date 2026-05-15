@@ -10,6 +10,7 @@ import { Toaster } from "@/components/toaster";
 const navItems = [
   { href: "/dashboard", label: "الإحصائيات", icon: "📊" },
   { href: "/users", label: "المستخدمين", icon: "👥" },
+  { href: "/analyze", label: "تحليل صوتي", icon: "🎤" },
   { href: "/telegram", label: "تيليجرام", icon: "💬" },
   { href: "/requests", label: "الطلبات", icon: "📋" },
   { href: "/tickets", label: "الرسائل", icon: "📨" },

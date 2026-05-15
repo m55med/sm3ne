@@ -114,8 +114,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   Future<void> _startRecording() async {
     try {
+      // Snapshot the permission state BEFORE we ask, so we can tell whether
+      // this call is the first-ever request (which will pop the iOS dialog)
+      // vs. a subsequent record attempt with permission already in place.
+      final wasUngrantedBefore = !(await Permission.microphone.status).isGranted;
+
       final granted = await _ensureMicPermission();
       if (!granted) return;
+
+      // First-time grant UX: the iOS permission sheet is modal and the
+      // recorder cannot start cleanly under it. If the user happens to tap
+      // through the sheet while the recorder is mid-init, the first
+      // recording captures nothing useful and Whisper hallucinates a
+      // greeting onto the silence ("مرحبا بكم في الفيديو الجديد"). Forcing
+      // a second explicit tap eliminates that race.
+      if (wasUngrantedBefore && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم منح إذن الميكروفون. اضغط مرة أخرى للبدء بالتسجيل.'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
 
       final dir = await getTemporaryDirectory();
       // WAV (pcm16 with headers): guaranteed ffmpeg/Whisper compatibility.

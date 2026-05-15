@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:bisawtak/config/constants.dart';
 import 'package:bisawtak/config/design_tokens.dart';
@@ -117,8 +118,17 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
 
       await ref.read(apiClientProvider).dio.delete('/profile', data: body);
 
-      // Locally clear everything and bounce to login.
-      await ref.read(authProvider.notifier).logout();
+      // Locally clear everything WITHOUT calling /auth/logout — the account
+      // no longer exists, so /auth/logout would 401 and trip the global
+      // auth-invalidation listener, which would then surface a misleading
+      // "session expired" toast on the next login.
+      await ref.read(authProvider.notifier).logoutLocalOnly();
+      // Also clear any pending expired-session flag set by an earlier 401
+      // racing with the delete request.
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('expired_session_pending');
+      } catch (_) {/* best effort */}
       Haptics.heavy();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

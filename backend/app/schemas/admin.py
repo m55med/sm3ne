@@ -284,3 +284,47 @@ class PlanUpdate(BaseModel):
     is_active: Optional[bool] = None
     transcription_provider: Optional[str] = None
     transcription_model: Optional[str] = None
+
+
+# --- Admin audio analyzer ---
+
+class AnalyzeFileInfo(BaseModel):
+    filename: str
+    content_type: Optional[str] = None
+    size_bytes: int
+
+
+class AnalyzeWordCount(BaseModel):
+    word: str
+    count: int
+
+
+class AnalyzeSegment(BaseModel):
+    id: int
+    start: float
+    end: float
+    text: str
+
+
+class AnalyzeAudioResponse(BaseModel):
+    file: AnalyzeFileInfo
+    provider: str
+    model: Optional[str] = None
+    language: str
+    language_name: str
+    duration_seconds: float
+    text: str
+    char_count: int
+    char_count_no_spaces: int
+    word_count: int
+    unique_word_count: int
+    avg_word_length: float
+    longest_word: str
+    sentence_count: int
+    paragraph_count: int
+    line_count: int
+    segment_count: int
+    speaking_rate_wpm: Optional[float] = None
+    punctuation: dict
+    top_words: List[AnalyzeWordCount]
+    segments: List[AnalyzeSegment]

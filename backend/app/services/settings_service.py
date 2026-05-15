@@ -165,3 +165,51 @@ def set_provider_order(
     seen: set[str] = set()
     deduped = [p for p in cleaned if not (p in seen or seen.add(p))]
     return set_setting(db, KEY_PROVIDER_ORDER, ",".join(deduped), user_id=user_id)
+
+
+# --- Ticket attachment limits (admin-tunable) -------------------------------
+# Defaults are conservative: 5 MB max, JPEG/PNG/WebP/HEIC only. Admin can widen
+# both from the dashboard without redeploying.
+KEY_TICKET_ATTACH_MAX_BYTES = "ticket_attach_max_bytes"
+KEY_TICKET_ATTACH_EXTS = "ticket_attach_allowed_extensions"
+
+DEFAULT_TICKET_ATTACH_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
+DEFAULT_TICKET_ATTACH_EXTS = "jpg,jpeg,png,webp,heic"
+
+
+def get_ticket_attach_max_bytes(db: Session) -> int:
+    raw = get_setting(db, KEY_TICKET_ATTACH_MAX_BYTES, default=str(DEFAULT_TICKET_ATTACH_MAX_BYTES))
+    try:
+        v = int(raw)
+        return v if v > 0 else DEFAULT_TICKET_ATTACH_MAX_BYTES
+    except (TypeError, ValueError):
+        return DEFAULT_TICKET_ATTACH_MAX_BYTES
+
+
+def get_ticket_attach_allowed_extensions(db: Session) -> set[str]:
+    raw = get_setting(db, KEY_TICKET_ATTACH_EXTS, default=DEFAULT_TICKET_ATTACH_EXTS)
+    return {p.strip().lower().lstrip(".") for p in (raw or "").split(",") if p.strip()}
+
+
+def set_ticket_attach_max_bytes(db: Session, value: int, user_id: int | None = None) -> AppSetting:
+    if value <= 0 or value > 100 * 1024 * 1024:
+        raise ValueError("max_bytes must be between 1 byte and 100 MB")
+    return set_setting(db, KEY_TICKET_ATTACH_MAX_BYTES, str(value), user_id=user_id)
+
+
+def set_ticket_attach_allowed_extensions(
+    db: Session, exts: list[str], user_id: int | None = None
+) -> AppSetting:
+    cleaned = sorted({e.strip().lower().lstrip(".") for e in exts if e and e.strip()})
+    if not cleaned:
+        raise ValueError("At least one extension is required")
+    # Hard cap on what we'll ever accept (defence-in-depth — admin can't allow
+    # executables/scripts even by typo).
+    SAFE = {"jpg", "jpeg", "png", "webp", "heic", "heif", "gif", "bmp"}
+    invalid = [e for e in cleaned if e not in SAFE]
+    if invalid:
+        raise ValueError(
+            f"Refusing to allow non-image extensions: {invalid}. "
+            f"Permitted: {sorted(SAFE)}"
+        )
+    return set_setting(db, KEY_TICKET_ATTACH_EXTS, ",".join(cleaned), user_id=user_id)

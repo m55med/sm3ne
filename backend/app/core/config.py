@@ -161,6 +161,13 @@ if not ADMIN_PASSWORD or len(ADMIN_PASSWORD) < 12:
     )
 
 # -----------------------------------------------------------------------------
+# Uploads root. Holds ticket-attachment images. We never serve raw paths from
+# user input — every file is keyed by its public_id and accessed through the
+# /support/tickets/.../attachments/{public_id} endpoint (auth-gated).
+# -----------------------------------------------------------------------------
+UPLOAD_ROOT = os.getenv("UPLOAD_ROOT", "/app/uploads").strip()
+
+# -----------------------------------------------------------------------------
 # Telegram Bot (optional — when unset, /webhooks/telegram returns 503 and the
 # mobile linking endpoints respond with `telegram_disabled`).
 #

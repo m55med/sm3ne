@@ -4,6 +4,8 @@ import { api } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { RefreshButton } from "@/components/refresh-button";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -12,6 +14,7 @@ import { formatNumber, formatDateTime } from "@/lib/format";
 import type {
   ProviderTestResult,
   ProviderUsage,
+  TicketAttachLimits,
   TranscriptionProvider,
   TranscriptionProviderInfo,
   TranscriptionProviderSetting,
@@ -286,6 +289,8 @@ export default function SettingsPage() {
         </p>
       </Card>
 
+      <TicketAttachmentSettings />
+
       <Card className="p-6">
         <h3 className="font-bold text-gray-900 mb-2">ملاحظات</h3>
         <ul className="text-sm text-gray-600 space-y-1 list-disc pe-5">
@@ -551,6 +556,152 @@ function labelFor(name: TranscriptionProvider): string {
     assemblyai: "AssemblyAI",
   };
   return map[name] || name;
+}
+
+// Allowed extensions exposed in the UI — server keeps its own whitelist as a
+// safety net, so we only show ones that are known-safe.
+const ATTACH_EXT_CHOICES = ["jpg", "jpeg", "png", "webp", "heic"] as const;
+
+function TicketAttachmentSettings() {
+  const [limits, setLimits] = useState<TicketAttachLimits | null>(null);
+  const [maxMb, setMaxMb] = useState<string>("5");
+  const [extensions, setExtensions] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    const data = await api<TicketAttachLimits>(
+      "/admin/settings/ticket-attachments",
+    );
+    setLimits(data);
+    setMaxMb((data.max_bytes / (1024 * 1024)).toString());
+    setExtensions(new Set(data.allowed_extensions));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function toggleExt(ext: string) {
+    setExtensions((prev) => {
+      const next = new Set(prev);
+      if (next.has(ext)) next.delete(ext);
+      else next.add(ext);
+      return next;
+    });
+  }
+
+  async function save() {
+    const mb = Number.parseFloat(maxMb);
+    if (!Number.isFinite(mb) || mb <= 0) {
+      toast.error("الحجم الأقصى يجب أن يكون رقماً موجباً");
+      return;
+    }
+    if (mb > 100) {
+      toast.error("الحجم الأقصى لا يتجاوز 100 ميجا");
+      return;
+    }
+    if (extensions.size === 0) {
+      toast.error("اختر امتداداً واحداً على الأقل");
+      return;
+    }
+    setSaving(true);
+    try {
+      const data = await api<TicketAttachLimits>(
+        "/admin/settings/ticket-attachments",
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            max_bytes: Math.round(mb * 1024 * 1024),
+            allowed_extensions: Array.from(extensions),
+          }),
+        },
+      );
+      setLimits(data);
+      setMaxMb((data.max_bytes / (1024 * 1024)).toString());
+      setExtensions(new Set(data.allowed_extensions));
+      toast.success("تم حفظ حدود المرفقات");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "فشل الحفظ");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!limits) {
+    return (
+      <Card className="p-6 mb-6">
+        <div className="h-24 animate-pulse bg-gray-100 rounded" />
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="p-6 mb-6">
+      <div className="mb-4">
+        <h2 className="text-lg font-bold text-gray-900">
+          حدود مرفقات تذاكر الدعم
+        </h2>
+        <p className="text-sm text-gray-500 mt-1">
+          الحد الأقصى لحجم الصورة والامتدادات المسموح بها للمستخدمين عند رفع
+          سكرين شوت داخل تذكرة دعم.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <Label htmlFor="ticket-attach-max-mb">الحجم الأقصى (ميجا بايت)</Label>
+          <Input
+            id="ticket-attach-max-mb"
+            type="number"
+            min={1}
+            max={100}
+            step={1}
+            value={maxMb}
+            onChange={(e) => setMaxMb(e.target.value)}
+            className="mt-1"
+            dir="ltr"
+          />
+          <p className="text-xs text-gray-400 mt-1">
+            الحد الأقصى المطلق 100 ميجا — موصى به 5–10 ميجا.
+          </p>
+        </div>
+        <div>
+          <span className="text-sm font-medium text-gray-700">
+            الامتدادات المسموح بها
+          </span>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {ATTACH_EXT_CHOICES.map((ext) => {
+              const checked = extensions.has(ext);
+              return (
+                <label
+                  key={ext}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm cursor-pointer select-none ${
+                    checked
+                      ? "border-blue-600 bg-blue-50 text-blue-700"
+                      : "border-gray-200 bg-white text-gray-700"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleExt(ext)}
+                    className="accent-blue-600"
+                  />
+                  <span dir="ltr">.{ext}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex justify-end mt-4">
+        <Button onClick={save} disabled={saving}>
+          {saving ? "جاري الحفظ…" : "حفظ الحدود"}
+        </Button>
+      </div>
+    </Card>
+  );
 }
 
 function formatSeconds(s: number): string {

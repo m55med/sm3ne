@@ -18,12 +18,24 @@ class TicketReplyCreate(BaseModel):
     message: str = Field(..., min_length=1, max_length=5000)
 
 
+class TicketAttachmentItem(BaseModel):
+    """One image attached to a ticket or reply. The download URL is built
+    by the client as `/support/tickets/{ticket_public_id}/attachments/{public_id}`."""
+    public_id: str
+    reply_public_id: Optional[str] = None
+    original_filename: Optional[str] = None
+    mime_type: str
+    size_bytes: int
+    created_at: Optional[datetime] = None
+
+
 class TicketReplyItem(BaseModel):
     public_id: Optional[str] = None
     is_admin: bool = False
     author_name: Optional[str] = None
     message: str
     created_at: Optional[datetime] = None
+    attachments: List["TicketAttachmentItem"] = []
 
 
 class TicketSummary(BaseModel):
@@ -45,6 +57,7 @@ class TicketDetail(BaseModel):
     message: str
     status: TicketStatus
     replies: List[TicketReplyItem] = []
+    attachments: List[TicketAttachmentItem] = []  # attachments on the original message (no reply_id)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

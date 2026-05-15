@@ -54,11 +54,9 @@ class SceneDelegate: FlutterSceneDelegate {
     options connectionOptions: UIScene.ConnectionOptions
   ) {
     super.scene(scene, willConnectTo: session, options: connectionOptions)
-    let bisawtakURL = connectionOptions.urlContexts.contains(where: { $0.url.scheme == "bisawtak" })
-    diag("scene", "willConnectTo bisawtak-url=\(bisawtakURL)")
-    if bisawtakURL {
-      deliverSharedAudio(retriesLeft: 24)
-    }
+    let urls = connectionOptions.urlContexts.map { $0.url.absoluteString }.joined(separator: ",")
+    diag("scene", "willConnectTo urls=[\(urls)]")
+    handle(urls: connectionOptions.urlContexts, retries: 24)
   }
 
   // Warm: app already running, Share Extension opens bisawtak://shared.
@@ -69,8 +67,82 @@ class SceneDelegate: FlutterSceneDelegate {
     super.scene(scene, openURLContexts: URLContexts)
     let urls = URLContexts.map { $0.url.absoluteString }.joined(separator: ",")
     diag("scene", "openURLContexts urls=[\(urls)]")
-    if URLContexts.contains(where: { $0.url.scheme == "bisawtak" }) {
-      deliverSharedAudio(retriesLeft: 8)
+    handle(urls: URLContexts, retries: 8)
+  }
+
+  /// Dispatch incoming URLs to the right delivery path.
+  ///   - `bisawtak://*` → our Share Extension wrote a file to the App Group;
+  ///     read it from UserDefaults.
+  ///   - `file://*`     → iOS bypassed our extension entirely and dropped the
+  ///     file straight into `Documents/Inbox/` (this is what WhatsApp actually
+  ///     does on modern iOS). The file is already in our sandbox; we just
+  ///     forward its path.
+  private func handle(urls: Set<UIOpenURLContext>, retries: Int) {
+    if urls.contains(where: { $0.url.scheme == "bisawtak" }) {
+      deliverSharedAudio(retriesLeft: retries)
+      return
+    }
+    if let fileURL = urls.first(where: { $0.url.isFileURL })?.url {
+      deliverInboxFile(fileURL, retriesLeft: retries)
+    }
+  }
+
+  /// Handle a `file://` URL iOS passes when another app opens an audio file
+  /// in us (the modern WhatsApp/Files/Mail "Open in" path). Copies the file
+  /// out of `Documents/Inbox` into the main `Documents` directory (Inbox is
+  /// read-only-ish and gets auto-cleaned) and forwards the path to Flutter.
+  private func deliverInboxFile(_ inboxURL: URL, retriesLeft: Int) {
+    diag("inbox", "got file=\(inboxURL.lastPathComponent) retries=\(retriesLeft)")
+
+    guard FileManager.default.fileExists(atPath: inboxURL.path) else {
+      diag("inbox", "FILE MISSING at \(inboxURL.path)")
+      return
+    }
+
+    guard let controller = window?.rootViewController as? FlutterViewController else {
+      diag("inbox", "FlutterViewController not ready — retry")
+      retryInbox(inboxURL, retries: retriesLeft)
+      return
+    }
+
+    let ext = inboxURL.pathExtension.isEmpty ? "m4a" : inboxURL.pathExtension
+    guard
+      let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+    else {
+      diag("inbox", "could not resolve Documents directory")
+      return
+    }
+    let destURL = docsDir.appendingPathComponent("shared_\(UUID().uuidString).\(ext)")
+    do {
+      try FileManager.default.copyItem(at: inboxURL, to: destURL)
+      diag("inbox", "copied → \(destURL.lastPathComponent)")
+    } catch {
+      diag("inbox", "copy error: \(error.localizedDescription)")
+      return
+    }
+
+    let channel = FlutterMethodChannel(
+      name: Self.channelName,
+      binaryMessenger: controller.binaryMessenger
+    )
+    diag("inbox", "invokeMethod sharedFile → Flutter")
+    channel.invokeMethod("sharedFile", arguments: destURL.path) { [weak self] result in
+      let notImplemented = (result as AnyObject) === FlutterMethodNotImplemented
+      if notImplemented {
+        diag("inbox", "Flutter handler MISSING — retry")
+        try? FileManager.default.removeItem(at: destURL)
+        self?.retryInbox(inboxURL, retries: retriesLeft)
+      } else {
+        diag("inbox", "✓ Flutter received — cleaning Inbox")
+        try? FileManager.default.removeItem(at: inboxURL)
+      }
+    }
+  }
+
+  private func retryInbox(_ url: URL, retries: Int) {
+    guard retries > 0 else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+      self?.deliverInboxFile(url, retriesLeft: retries - 1)
     }
   }
 

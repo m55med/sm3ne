@@ -157,12 +157,22 @@ export interface TicketSummary {
   created_at: string | null;
 }
 
+export interface TicketAttachmentItem {
+  public_id: string;
+  reply_public_id: string | null;
+  original_filename: string | null;
+  mime_type: string;
+  size_bytes: number;
+  created_at: string | null;
+}
+
 export interface TicketReplyItem {
   public_id: string | null;
   is_admin: boolean;
   author_name: string | null;
   message: string;
   created_at: string | null;
+  attachments?: TicketAttachmentItem[];
 }
 
 export interface TicketDetail {
@@ -174,8 +184,14 @@ export interface TicketDetail {
   message: string;
   status: TicketStatus;
   replies: TicketReplyItem[];
+  attachments?: TicketAttachmentItem[];
   created_at: string | null;
   updated_at: string | null;
+}
+
+export interface TicketAttachLimits {
+  max_bytes: number;
+  allowed_extensions: string[];
 }
 
 export interface AdminTicketListResponse {
@@ -358,4 +374,48 @@ export interface ProviderUsage {
 
 export interface TranscriptionProviderUsageResponse {
   providers: ProviderUsage[];
+}
+
+// --- Admin audio analyzer ---
+
+export interface AnalyzeFileInfo {
+  filename: string;
+  content_type: string | null;
+  size_bytes: number;
+}
+
+export interface AnalyzeWordCount {
+  word: string;
+  count: number;
+}
+
+export interface AnalyzeSegment {
+  id: number;
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface AnalyzeAudioResponse {
+  file: AnalyzeFileInfo;
+  provider: string;
+  model: string | null;
+  language: string;
+  language_name: string;
+  duration_seconds: number;
+  text: string;
+  char_count: number;
+  char_count_no_spaces: number;
+  word_count: number;
+  unique_word_count: number;
+  avg_word_length: number;
+  longest_word: string;
+  sentence_count: number;
+  paragraph_count: number;
+  line_count: number;
+  segment_count: number;
+  speaking_rate_wpm: number | null;
+  punctuation: Record<string, number>;
+  top_words: AnalyzeWordCount[];
+  segments: AnalyzeSegment[];
 }

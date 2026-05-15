@@ -9,6 +9,10 @@ services:
     restart: unless-stopped
     volumes:
       - whisper-cache:/root/.cache/whisper
+      # Support-ticket image attachments (and any future user-uploaded files).
+      # MUST be a named volume — anything written to /app/uploads is wiped
+      # on every container recreate without this.
+      - bisawtak-uploads:/app/uploads
     depends_on:
       bisawtak-db:
         condition: service_healthy
@@ -48,6 +52,7 @@ services:
 
 volumes:
   whisper-cache:
+  bisawtak-uploads:
   bisawtak-pgdata:
 
 networks:

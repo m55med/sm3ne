@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -9,11 +10,31 @@ from app.auth.jwt import get_current_user
 from app.core.config import limiter
 from app.core.lifespan import generate_public_id
 from app.db.database import get_db
-from app.db.models import SupportTicket, TicketReply, User
+from app.db.models import SupportTicket, TicketAttachment, TicketReply, User
 from app.schemas.support import (
-    TicketCreateRequest, TicketReplyCreate, TicketReplyItem,
+    TicketAttachmentItem, TicketCreateRequest, TicketReplyCreate, TicketReplyItem,
     TicketSummary, TicketDetail, TicketListResponse,
 )
+from app.services import ticket_attachment_service
+
+
+def _attachments_for(db: Session, ticket_id: int) -> list[TicketAttachment]:
+    return db.query(TicketAttachment).filter(
+        TicketAttachment.ticket_id == ticket_id
+    ).order_by(TicketAttachment.created_at).all()
+
+
+def _serialize_attachment(
+    a: TicketAttachment, reply_public_id: str | None = None
+) -> TicketAttachmentItem:
+    return TicketAttachmentItem(
+        public_id=a.public_id,
+        reply_public_id=reply_public_id,
+        original_filename=a.original_filename,
+        mime_type=a.mime_type,
+        size_bytes=a.size_bytes,
+        created_at=a.created_at,
+    )
 
 router = APIRouter(prefix="/support", tags=["support"])
 
@@ -108,6 +129,21 @@ async def get_my_ticket(
     replies = db.query(TicketReply).filter(TicketReply.ticket_id == ticket.id).order_by(TicketReply.created_at).all()
     user_ids = {r.user_id for r in replies}
     users = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+
+    # Group attachments: ones with reply_id null hang off the original message;
+    # otherwise they belong to a specific reply.
+    attachments = _attachments_for(db, ticket.id)
+    reply_public_ids = {r.id: r.public_id for r in replies}
+    attachments_on_message: list[TicketAttachmentItem] = []
+    attachments_by_reply: dict[int, list[TicketAttachmentItem]] = {}
+    for a in attachments:
+        if a.reply_id is None:
+            attachments_on_message.append(_serialize_attachment(a))
+        else:
+            attachments_by_reply.setdefault(a.reply_id, []).append(
+                _serialize_attachment(a, reply_public_id=reply_public_ids.get(a.reply_id))
+            )
+
     reply_items = [
         TicketReplyItem(
             public_id=r.public_id,
@@ -115,6 +151,7 @@ async def get_my_ticket(
             author_name=(users.get(r.user_id).full_name if users.get(r.user_id) and users[r.user_id].full_name else (users.get(r.user_id).username if users.get(r.user_id) else None)),
             message=r.message,
             created_at=r.created_at,
+            attachments=attachments_by_reply.get(r.id, []),
         ) for r in replies
     ]
     return TicketDetail(
@@ -126,8 +163,61 @@ async def get_my_ticket(
         message=ticket.message,
         status=ticket.status,
         replies=reply_items,
+        attachments=attachments_on_message,
         created_at=ticket.created_at,
         updated_at=ticket.updated_at,
+    )
+
+
+# --- Attachment endpoints ----------------------------------------------------
+
+
+@router.post(
+    "/tickets/{public_id}/attachments",
+    response_model=TicketAttachmentItem,
+    status_code=201,
+)
+@limiter.limit("10/hour")
+async def upload_attachment(
+    public_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Attach an image to a ticket (or its latest reply by the user). Limit
+    is 10 uploads/hour to protect disk + the admin queue from spam."""
+    ticket = _load_ticket_for_user(db, public_id, user)
+    if ticket.status == "closed":
+        raise HTTPException(400, "Ticket is closed")
+    attachment = await ticket_attachment_service.save_attachment(
+        db, upload=file, ticket_id=ticket.id, user_id=user.id, reply_id=None,
+    )
+    return _serialize_attachment(attachment)
+
+
+@router.get("/tickets/{public_id}/attachments/{attachment_public_id}")
+async def download_attachment(
+    public_id: str,
+    attachment_public_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Download an attachment. Owner-only — admins use the admin endpoint."""
+    ticket = _load_ticket_for_user(db, public_id, user)
+    attachment = db.query(TicketAttachment).filter(
+        TicketAttachment.public_id == attachment_public_id,
+        TicketAttachment.ticket_id == ticket.id,
+    ).first()
+    if not attachment:
+        raise HTTPException(404, "Attachment not found")
+    path = ticket_attachment_service.attachment_disk_path(attachment)
+    if not path.exists():
+        raise HTTPException(404, "Attachment file missing from disk")
+    return FileResponse(
+        path=str(path),
+        media_type=attachment.mime_type,
+        filename=attachment.original_filename or f"{attachment.public_id}",
     )
 
 

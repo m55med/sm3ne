@@ -1,9 +1,12 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 import 'package:bisawtak/core/api/api_client.dart';
+import 'package:bisawtak/data/repositories/support_repository.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
 
 class TicketDetailScreen extends ConsumerStatefulWidget {
@@ -108,9 +111,11 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
       );
     }
     final t = _ticket!;
+    final ticketPublicId = t['public_id']?.toString() ?? widget.publicId;
     final replies = List<Map<String, dynamic>>.from(t['replies'] ?? []);
     final status = t['status'] as String? ?? 'open';
     final isClosed = status == 'closed';
+    final messageAttachments = _attachmentsOf(t);
 
     return Column(
       children: [
@@ -125,6 +130,8 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
                 message: t['message']?.toString() ?? '',
                 isAdmin: false,
                 createdAt: t['created_at']?.toString(),
+                attachments: messageAttachments,
+                ticketPublicId: ticketPublicId,
               ),
               const SizedBox(height: 12),
               if (replies.isNotEmpty) ...[
@@ -136,6 +143,8 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
                     message: r['message']?.toString() ?? '',
                     isAdmin: r['is_admin'] == true,
                     createdAt: r['created_at']?.toString(),
+                    attachments: _attachmentsOf(r),
+                    ticketPublicId: ticketPublicId,
                   )),
             ],
           ),
@@ -226,21 +235,31 @@ class _Header extends StatelessWidget {
   }
 }
 
-class _MessageBubble extends StatelessWidget {
+List<Map<String, dynamic>> _attachmentsOf(Map<String, dynamic> source) {
+  final raw = source['attachments'];
+  if (raw is! List) return const [];
+  return raw.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList();
+}
+
+class _MessageBubble extends ConsumerWidget {
   final String authorName;
   final String message;
   final bool isAdmin;
   final String? createdAt;
+  final List<Map<String, dynamic>> attachments;
+  final String ticketPublicId;
 
   const _MessageBubble({
     required this.authorName,
     required this.message,
     required this.isAdmin,
+    required this.ticketPublicId,
+    this.attachments = const [],
     this.createdAt,
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
     // Chat convention (matches WhatsApp/Telegram RTL): the "other" speaker
     // sits visually-left, the current user visually-right. Physical
@@ -278,6 +297,20 @@ class _MessageBubble extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(message, style: const TextStyle(height: 1.5)),
+            if (attachments.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final a in attachments)
+                    _RemoteAttachmentThumb(
+                      ticketPublicId: ticketPublicId,
+                      attachmentPublicId: a['public_id']?.toString() ?? '',
+                    ),
+                ],
+              ),
+            ],
             if (createdAt != null) ...[
               const SizedBox(height: 4),
               Text(_fmt(createdAt!), style: TextStyle(fontSize: 10, color: cs.onSurfaceVariant)),
@@ -295,6 +328,112 @@ class _MessageBubble extends StatelessWidget {
     } catch (_) {
       return iso;
     }
+  }
+}
+
+/// Authenticated thumbnail — the attachment endpoint requires Bearer auth so
+/// a plain `Image.network` won't work. We fetch bytes via the repository and
+/// render with `Image.memory`. Tap opens a full-screen preview.
+class _RemoteAttachmentThumb extends ConsumerStatefulWidget {
+  final String ticketPublicId;
+  final String attachmentPublicId;
+  const _RemoteAttachmentThumb({
+    required this.ticketPublicId,
+    required this.attachmentPublicId,
+  });
+
+  @override
+  ConsumerState<_RemoteAttachmentThumb> createState() =>
+      _RemoteAttachmentThumbState();
+}
+
+class _RemoteAttachmentThumbState extends ConsumerState<_RemoteAttachmentThumb> {
+  Uint8List? _bytes;
+  bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (widget.attachmentPublicId.isEmpty) {
+      setState(() => _error = true);
+      return;
+    }
+    try {
+      final bytes = await ref.read(supportRepositoryProvider).fetchAttachmentBytes(
+            ticketPublicId: widget.ticketPublicId,
+            attachmentPublicId: widget.attachmentPublicId,
+          );
+      if (!mounted) return;
+      setState(() => _bytes = Uint8List.fromList(bytes));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = true);
+    }
+  }
+
+  void _openFullscreen() {
+    final bytes = _bytes;
+    if (bytes == null) return;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          backgroundColor: Colors.black,
+          iconTheme: const IconThemeData(color: Colors.white),
+        ),
+        body: Center(
+          child: InteractiveViewer(child: Image.memory(bytes)),
+        ),
+      ),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error) {
+      return Container(
+        width: 72,
+        height: 72,
+        decoration: BoxDecoration(
+          color: Colors.red.shade50,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        alignment: Alignment.center,
+        child: const Icon(Icons.broken_image_outlined, size: 24, color: Colors.redAccent),
+      );
+    }
+    if (_bytes == null) {
+      return Container(
+        width: 72,
+        height: 72,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        alignment: Alignment.center,
+        child: const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    return GestureDetector(
+      onTap: _openFullscreen,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.memory(
+          _bytes!,
+          width: 72,
+          height: 72,
+          fit: BoxFit.cover,
+        ),
+      ),
+    );
   }
 }
 

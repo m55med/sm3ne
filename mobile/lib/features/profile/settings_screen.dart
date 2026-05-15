@@ -88,19 +88,19 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           const Divider(height: 1),
-          // Logout
+          // Logout — the everyday "sign me out" action.
           ListTile(
             leading: Icon(Icons.logout, color: scheme.error),
             title: Text('تسجيل الخروج', style: TextStyle(color: scheme.error)),
             onTap: () => _confirmLogout(context, ref),
           ),
-          const Divider(height: 1),
-          // Delete account (destructive)
-          ListTile(
-            leading: Icon(Icons.delete_forever, color: scheme.error),
-            title: Text('حذف الحساب نهائياً', style: TextStyle(color: scheme.error)),
-            onTap: () => _confirmDeleteAccount(context, ref),
-          ),
+
+          // Visually separated "Danger zone". Delete-account used to sit
+          // right under Logout — UX-wise that read as "next natural step",
+          // which led users to delete their account by mistake. We now
+          // segregate it: extra spacing, a bold header, an "advanced" gate.
+          const SizedBox(height: AppSpacing.xxl),
+          _DangerZone(onDelete: () => _confirmDeleteAccount(context, ref)),
           const SizedBox(height: AppSpacing.xl),
         ],
       ),
@@ -172,9 +172,16 @@ class SettingsScreen extends ConsumerWidget {
     if (!ok || !context.mounted) return;
 
     try {
-      // Soft-deletes the account server-side and clears local state via logout().
+      // Soft-deletes the account server-side, then wipes local state WITHOUT
+      // calling /auth/logout. Hitting /auth/logout for a just-deleted account
+      // would 401 → trip the global auth-invalidation listener → mis-show
+      // "session expired" on the login screen the user lands on next.
       await ref.read(profileRepositoryProvider).deleteAccount(confirmation: true);
-      await ref.read(authProvider.notifier).logout();
+      await ref.read(authProvider.notifier).logoutLocalOnly();
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('expired_session_pending');
+      } catch (_) {/* best effort */}
       if (context.mounted) context.go('/login');
     } catch (e) {
       if (context.mounted) {
@@ -209,6 +216,71 @@ class _ThemeOption extends ConsumerWidget {
         await prefs.setString('theme_mode', val == ThemeMode.dark ? 'dark' : val == ThemeMode.light ? 'light' : 'system');
         if (context.mounted) Navigator.pop(context);
       },
+    );
+  }
+}
+
+/// Collapsed "danger zone" with the irreversible account-deletion action.
+/// Hidden behind an explicit toggle so it can't be tapped by reflex —
+/// previously the delete tile lived right under Logout and users hit it
+/// thinking it was a logout follow-up.
+class _DangerZone extends StatefulWidget {
+  final VoidCallback onDelete;
+  const _DangerZone({required this.onDelete});
+
+  @override
+  State<_DangerZone> createState() => _DangerZoneState();
+}
+
+class _DangerZoneState extends State<_DangerZone> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      decoration: BoxDecoration(
+        border: Border.all(color: scheme.error.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+      ),
+      child: Column(
+        children: [
+          ListTile(
+            leading: Icon(Icons.warning_amber_rounded, color: scheme.error),
+            title: Text(
+              'منطقة خطرة',
+              style: TextStyle(
+                color: scheme.error,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            subtitle: Text(
+              _expanded
+                  ? 'إجراءات لا يمكن التراجع عنها.'
+                  : 'اضغط لإظهار خيارات حذف الحساب.',
+              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+            ),
+            trailing: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
+            onTap: () => setState(() => _expanded = !_expanded),
+          ),
+          if (_expanded) ...[
+            const Divider(height: 1),
+            ListTile(
+              leading: Icon(Icons.delete_forever, color: scheme.error),
+              title: Text(
+                'حذف الحساب نهائياً',
+                style: TextStyle(color: scheme.error),
+              ),
+              subtitle: const Text(
+                'سيتم حذف حسابك وجميع بياناتك بشكل دائم.',
+                style: TextStyle(fontSize: 12),
+              ),
+              onTap: widget.onDelete,
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

@@ -11,7 +11,9 @@ import { RefreshButton } from "@/components/refresh-button";
 import { toast } from "@/components/toast";
 import { TICKET_STATUS_LABEL, TICKET_TYPE_LABEL } from "@/lib/labels";
 import { formatDateTime } from "@/lib/format";
-import type { TicketDetail, TicketStatus } from "@/lib/types";
+import type { TicketAttachmentItem, TicketDetail, TicketStatus } from "@/lib/types";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
 export default function AdminTicketDetail() {
   const { id } = useParams();
@@ -113,6 +115,8 @@ export default function AdminTicketDetail() {
             isAdmin={false}
             message={ticket.message}
             createdAt={ticket.created_at}
+            attachments={ticket.attachments}
+            ticketPublicId={ticket.public_id}
           />
 
           {/* الردود */}
@@ -123,6 +127,8 @@ export default function AdminTicketDetail() {
               isAdmin={r.is_admin}
               message={r.message}
               createdAt={r.created_at}
+              attachments={r.attachments}
+              ticketPublicId={ticket.public_id}
             />
           ))}
         </div>
@@ -152,11 +158,20 @@ export default function AdminTicketDetail() {
   );
 }
 
-function MessageBubble({ authorName, isAdmin, message, createdAt }: {
+function MessageBubble({
+  authorName,
+  isAdmin,
+  message,
+  createdAt,
+  attachments,
+  ticketPublicId,
+}: {
   authorName: string;
   isAdmin: boolean;
   message: string;
   createdAt: string | null | undefined;
+  attachments?: TicketAttachmentItem[];
+  ticketPublicId: string;
 }) {
   return (
     <div className={`flex ${isAdmin ? "justify-start" : "justify-end"}`}>
@@ -167,10 +182,83 @@ function MessageBubble({ authorName, isAdmin, message, createdAt }: {
           </span>
         </div>
         <p className="text-sm whitespace-pre-wrap leading-relaxed">{message}</p>
+        {attachments && attachments.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {attachments.map((a) => (
+              <AttachmentThumb
+                key={a.public_id}
+                attachment={a}
+                ticketPublicId={ticketPublicId}
+              />
+            ))}
+          </div>
+        )}
         {createdAt && (
           <p className="text-[10px] text-gray-400 mt-1">{formatDateTime(createdAt)}</p>
         )}
       </div>
     </div>
+  );
+}
+
+/// Authenticated <img>: the attachment endpoint requires Bearer auth, so a
+/// plain <img src=...> won't load. We fetch the bytes with the token, turn
+/// them into an object URL, and revoke it on unmount.
+function AttachmentThumb({
+  attachment,
+  ticketPublicId,
+}: {
+  attachment: TicketAttachmentItem;
+  ticketPublicId: string;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    (async () => {
+      try {
+        const token = localStorage.getItem("admin_token");
+        const res = await fetch(
+          `${API_BASE}/admin/tickets/${ticketPublicId}/attachments/${attachment.public_id}`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+        );
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const blob = await res.blob();
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      } catch {
+        if (!cancelled) setError(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [attachment.public_id, ticketPublicId]);
+
+  if (error) {
+    return (
+      <div className="w-24 h-24 rounded-lg bg-red-50 border border-red-200 flex items-center justify-center text-xs text-red-600">
+        تعذّر التحميل
+      </div>
+    );
+  }
+  if (!src) {
+    return (
+      <div className="w-24 h-24 rounded-lg bg-gray-200 animate-pulse" />
+    );
+  }
+  return (
+    <a href={src} target="_blank" rel="noreferrer" className="block">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={attachment.original_filename || "attachment"}
+        className="w-24 h-24 rounded-lg object-cover border border-gray-200 hover:opacity-90 transition"
+      />
+    </a>
   );
 }

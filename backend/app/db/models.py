@@ -220,6 +220,35 @@ class TicketReply(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
+class TicketAttachment(Base):
+    """Image attachments on support tickets / replies. Used by the mobile
+    contact form so deaf users can submit a screenshot of the issue. Files
+    live on local disk; this row carries the metadata + a stable public_id
+    that the download URL is built from.
+    """
+    __tablename__ = "ticket_attachments"
+    __table_args__ = (
+        Index("idx_ticket_attachments_ticket", "ticket_id", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    public_id = Column(String(12), unique=True, nullable=False, index=True)
+    ticket_id = Column(Integer, ForeignKey("support_tickets.id", ondelete="CASCADE"), nullable=False, index=True)
+    # reply_id is set when the attachment was added with a specific reply; null
+    # when it was attached at ticket creation time.
+    reply_id = Column(Integer, ForeignKey("ticket_replies.id", ondelete="CASCADE"), nullable=True, index=True)
+    uploaded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Original filename — for the admin to see what the user submitted. Stored
+    # filename on disk uses public_id so we don't have to sanitize this.
+    original_filename = Column(String(255), nullable=True)
+    mime_type = Column(String(80), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    # Path relative to the uploads root, e.g. "tickets/<yy>/<mm>/<public_id>.png".
+    # We never let user input near this path — see services/ticket_attachment_service.
+    storage_path = Column(String(255), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
 class AccountDeletion(Base):
     """Audit trail of account deletions. Kept after the user row is hard-deleted
     so the admin can see who left, when, and why (legal / GDPR audit trail)."""

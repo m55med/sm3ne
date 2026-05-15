@@ -129,11 +129,25 @@ class AuthNotifier extends StateNotifier<AuthState> {
     } catch (_) {
       // Best-effort; logout proceeds even if the server call fails.
     }
+    await _clearLocalAuthState();
+  }
+
+  /// Clears local auth state WITHOUT calling `/auth/logout`. Used by the
+  /// account-deletion flow: after a successful DELETE /profile the account
+  /// no longer exists, so calling /auth/logout would 401 — and that 401
+  /// trips the api_client's auth-invalidation stream which mis-attributes
+  /// the deletion as an "expired session" and shows the wrong message on
+  /// the next login. Calling THIS method instead avoids that side-effect.
+  Future<void> logoutLocalOnly() async {
+    await _clearLocalAuthState();
+  }
+
+  Future<void> _clearLocalAuthState() async {
     await _tokenStorage.clearAll();
     try {
       await _transcriptionDao.deleteAll();
     } catch (_) {
-      // Don't block logout on DB failure.
+      // Don't block teardown on DB failure.
     }
     state = const AuthState(status: AuthStatus.unauthenticated);
   }
