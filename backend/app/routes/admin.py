@@ -11,6 +11,7 @@ from sqlalchemy import func
 logger = logging.getLogger(__name__)
 
 from app.auth.api_key import generate_api_key
+from app.core.config import TOKEN_EXPIRE_MINUTES
 from app.db.database import get_db
 from app.db.models import ApiKey, AppSetting, Coupon, LoginEvent, Plan, SupportTicket, TicketReply, TranscriptionRequest, User, UserSubscription
 from app.auth.jwt import get_current_admin
@@ -42,6 +43,87 @@ from app.services.subscription_service import get_user_plan, subscribe_user
 from app.services import audit_service, settings_service, transcription_service, usage_service
 from app.services import text_analyzer
 from app.services.file_validation import validate_audio_upload
+
+
+# Window during which a successful login still has a potentially-live access
+# token. JWTs are stateless, so this is the best proxy we have for "alive
+# session" without a real session table. Bumped slightly so a token that
+# expires while the page is loading still counts as the same session.
+_SESSION_LIVE_WINDOW = timedelta(minutes=max(TOKEN_EXPIRE_MINUTES, 5))
+
+
+def _device_fingerprint(e: LoginEvent) -> tuple:
+    """Group successive logins from the same device under one 'session'. We
+    fall back to ip_address + user_agent when device fields are missing
+    (web/admin sign-ins set those rather than device_*)."""
+    return (
+        (e.device_platform or "").strip().lower(),
+        (e.device_model or "").strip().lower(),
+        (e.app_version or "").strip().lower(),
+        (e.ip_address or "").strip(),
+        (e.user_agent or "")[:120],
+    )
+
+
+def _count_active_sessions(db: Session, user: User) -> tuple[int, Optional[datetime]]:
+    """Returns (active_session_count, last_session_at) for one user.
+
+    - Deactivated accounts always report 0 — their tokens are also rejected
+      by ``get_current_user``, so any historical login row is dead weight.
+    - Refresh events are excluded because they extend an existing session
+      rather than open a new one.
+    - Distinct device fingerprints are counted once even if the user
+      re-logged on the same device.
+    """
+    if not user.is_active:
+        return 0, None
+    cutoff = datetime.now(timezone.utc) - _SESSION_LIVE_WINDOW
+    events = db.query(LoginEvent).filter(
+        LoginEvent.user_id == user.id,
+        LoginEvent.success == True,
+        LoginEvent.event_type.in_(["login", "register"]),
+        LoginEvent.created_at >= cutoff,
+    ).order_by(LoginEvent.created_at.desc()).all()
+    devices: set = set()
+    last: Optional[datetime] = None
+    for e in events:
+        devices.add(_device_fingerprint(e))
+        if last is None:
+            last = e.created_at
+    return len(devices), last
+
+
+def _batch_active_sessions(
+    db: Session, users: list[User]
+) -> dict[int, tuple[int, Optional[datetime]]]:
+    """Per-user (active_count, last_at). One query, grouped in Python so we
+    can apply the device-fingerprint dedupe that SQL can't do cleanly."""
+    if not users:
+        return {}
+    active_ids = [u.id for u in users if u.is_active]
+    if not active_ids:
+        return {u.id: (0, None) for u in users}
+    cutoff = datetime.now(timezone.utc) - _SESSION_LIVE_WINDOW
+    events = db.query(LoginEvent).filter(
+        LoginEvent.user_id.in_(active_ids),
+        LoginEvent.success == True,
+        LoginEvent.event_type.in_(["login", "register"]),
+        LoginEvent.created_at >= cutoff,
+    ).order_by(LoginEvent.created_at.desc()).all()
+    per_user: dict[int, dict] = {}
+    for e in events:
+        slot = per_user.setdefault(e.user_id, {"devices": set(), "last": None})
+        slot["devices"].add(_device_fingerprint(e))
+        if slot["last"] is None:
+            slot["last"] = e.created_at
+    out: dict[int, tuple[int, Optional[datetime]]] = {}
+    for u in users:
+        if not u.is_active:
+            out[u.id] = (0, None)
+        else:
+            slot = per_user.get(u.id)
+            out[u.id] = (len(slot["devices"]), slot["last"]) if slot else (0, None)
+    return out
 
 
 def _safe_audit(db, **kwargs):
@@ -120,34 +202,21 @@ async def list_users(
     plan_ids = {s.plan_id for s in subs.values()}
     plans = {p.id: p for p in db.query(Plan).filter(Plan.id.in_(plan_ids)).all()} if plan_ids else {}
 
-    # Batch session counts (active ≈ successful login in last 7 days)
-    session_stats: dict[int, dict] = {}
-    if user_ids:
-        week_ago = datetime.now(timezone.utc) - timedelta(days=7)
-        rows = db.query(
-            LoginEvent.user_id,
-            func.count(LoginEvent.id),
-            func.max(LoginEvent.created_at),
-        ).filter(
-            LoginEvent.user_id.in_(user_ids),
-            LoginEvent.success == True,
-            LoginEvent.event_type.in_(["login", "register"]),
-            LoginEvent.created_at >= week_ago,
-        ).group_by(LoginEvent.user_id).all()
-        for uid, count, last in rows:
-            session_stats[uid] = {"active": count, "last": last}
+    # "Active" = login/register within the access-token lifetime, deduped by
+    # device fingerprint, zero for deactivated accounts. See _count_active_sessions.
+    session_stats = _batch_active_sessions(db, users)
 
     items = []
     for u in users:
         sub = subs.get(u.id)
         plan_name = plans.get(sub.plan_id).name if sub and plans.get(sub.plan_id) else "free"
-        stats = session_stats.get(u.id, {})
+        active_count, last_at = session_stats.get(u.id, (0, None))
         items.append(UserListItem(
             id=u.id, public_id=u.public_id, username=u.username, email=u.email, full_name=u.full_name,
             role=u.role, is_active=u.is_active, auth_provider=u.auth_provider,
             plan_name=plan_name,
-            active_sessions=stats.get("active", 0),
-            last_session_at=stats.get("last"),
+            active_sessions=active_count,
+            last_session_at=last_at,
             created_at=u.created_at,
         ))
 
@@ -250,13 +319,7 @@ async def get_user(
         max_audio_seconds=effective_plan.max_audio_seconds if effective_plan else 30,
     )
 
-    # Active sessions (last 7 days)
-    week_ago = now_utc - timedelta(days=7)
-    active_sessions = db.query(func.count(LoginEvent.id)).filter(
-        LoginEvent.user_id == user.id,
-        LoginEvent.success == True,
-        LoginEvent.created_at >= week_ago,
-    ).scalar() or 0
+    active_sessions, _ = _count_active_sessions(db, user)
 
     return UserDetailResponse(
         id=user.id, public_id=user.public_id, username=user.username, email=user.email,
@@ -358,11 +421,30 @@ async def list_user_sessions(
         LoginEvent.user_id == user.id
     ).order_by(LoginEvent.created_at.desc()).limit(limit).all()
 
-    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
-    items = []
+    # Same definition the list/detail endpoints use — only the *latest* event
+    # per device fingerprint is "still live", and only while its token hasn't
+    # expired. Deactivated accounts → no event is active.
+    cutoff = datetime.now(timezone.utc) - _SESSION_LIVE_WINDOW
+    seen_devices: set = set()
+    items: list[SessionItem] = []
     for e in events:
-        created_aware = e.created_at.replace(tzinfo=timezone.utc) if e.created_at and e.created_at.tzinfo is None else e.created_at
-        is_active = bool(e.success and created_aware and created_aware >= week_ago)
+        created_aware = (
+            e.created_at.replace(tzinfo=timezone.utc)
+            if e.created_at and e.created_at.tzinfo is None
+            else e.created_at
+        )
+        is_active = False
+        if (
+            user.is_active
+            and e.success
+            and e.event_type in ("login", "register")
+            and created_aware
+            and created_aware >= cutoff
+        ):
+            fp = _device_fingerprint(e)
+            if fp not in seen_devices:
+                seen_devices.add(fp)
+                is_active = True
         item = SessionItem.model_validate(e)
         item.is_active = is_active
         items.append(item)
