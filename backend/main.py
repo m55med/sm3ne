@@ -17,6 +17,7 @@ from app.routes.admin_telegram import router as admin_telegram_router
 from app.routes.telegram import router as telegram_router
 from app.routes.telegram_webhook import router as telegram_webhook_router
 from app.routes.legal import router as legal_router
+from app.routes.diag import router as diag_router  # TEMP: share-intent diagnostics
 from app.services import whisper_service
 
 app = FastAPI(title="Bisawtak - Speech-to-Text API", version="2.0.0", lifespan=lifespan)
@@ -56,6 +57,8 @@ app.include_router(telegram_router, prefix=API_PREFIX)
 # Webhook receiver lives under the same /api/v1 prefix as everything else;
 # the URL the bot calls is /api/v1/webhooks/telegram.
 app.include_router(telegram_webhook_router, prefix=API_PREFIX)
+# TEMP: share-intent diagnostics. Remove once the bug is closed.
+app.include_router(diag_router, prefix=API_PREFIX)
 # Legal pages live at the root (/privacy, /terms, /support) because Apple &
 # Google require the URLs to be plain-link friendly, not API-prefixed.
 app.include_router(legal_router)

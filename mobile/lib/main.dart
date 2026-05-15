@@ -12,12 +12,42 @@ import 'package:bisawtak/config/theme.dart';
 import 'package:bisawtak/config/routes.dart';
 import 'package:bisawtak/core/analytics/analytics_service.dart';
 import 'package:bisawtak/features/share_receiver/share_handler_screen.dart';
+import 'package:bisawtak/shared/utils/remote_logger.dart';
 import 'package:bisawtak/shared/utils/sandbox_paths.dart';
 
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 final localeProvider = StateProvider<Locale?>((ref) => null);
-// Holds a shared file path when app is opened via share/open-with
-final sharedFileProvider = StateProvider<String?>((ref) => null);
+
+/// Holds the path of a file shared into the app (WhatsApp voice note, "Open
+/// with…", etc.). Implemented as a Notifier — NOT a plain `StateProvider` —
+/// so the only way to clear it is via the explicit [SharedFileNotifier.dismiss]
+/// method (called from the share-handler's "done/close" buttons). This guards
+/// against accidental resets from unrelated code paths that would make the
+/// share screen flicker and vanish.
+class SharedFileNotifier extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  /// Stage a file for the share handler. Idempotent on the same path.
+  void accept(String path) {
+    if (state == path) {
+      RemoteLogger.log('share', 'accept-skip (same path): $path');
+      return;
+    }
+    RemoteLogger.log('share', 'accept: $path (was: $state)');
+    state = path;
+  }
+
+  /// Tear down the share handler. The ONLY way to clear the state — called
+  /// exclusively from the share-handler's user-initiated "تم/إغلاق" actions.
+  void dismiss() {
+    RemoteLogger.log('share', 'dismiss (was: $state)');
+    state = null;
+  }
+}
+
+final sharedFileProvider =
+    NotifierProvider<SharedFileNotifier, String?>(SharedFileNotifier.new);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -75,8 +105,11 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
   }
 
   void _handleIncomingShares() {
+    RemoteLogger.log('share', '_handleIncomingShares registered');
+
     // Handle shared files when app is already running
     ReceiveSharingIntent.instance.getMediaStream().listen((files) {
+      RemoteLogger.log('share', 'rsi-stream fired (${files.length} files)');
       if (files.isNotEmpty && files.first.path.isNotEmpty) {
         _acceptSharedPath(files.first.path);
       }
@@ -84,14 +117,16 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
 
     // Handle shared files when app is opened via share
     ReceiveSharingIntent.instance.getInitialMedia().then((files) {
+      RemoteLogger.log('share', 'rsi-initial fired (${files.length} files)');
       if (files.isNotEmpty && files.first.path.isNotEmpty) {
         _acceptSharedPath(files.first.path);
       }
     });
 
-    // Handle "Open with" file URLs from iOS native
+    // Handle "Open with" file URLs from iOS native (our SceneDelegate).
     const channel = MethodChannel('com.bisawtak/share');
     channel.setMethodCallHandler((call) async {
+      RemoteLogger.log('share', 'channel called: ${call.method}');
       if (call.method == 'sharedFile') {
         final path = call.arguments as String;
         _acceptSharedPath(path);
@@ -105,21 +140,25 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
   /// silently to defuse path-traversal vectors. Failures are logged in debug
   /// builds so we can diagnose why a share from a new platform was rejected.
   Future<void> _acceptSharedPath(String path) async {
+    RemoteLogger.log('share', '_acceptSharedPath entry: "$path"');
     if (path.isEmpty || path.contains('..')) {
-      if (kDebugMode) debugPrint('share-receiver: rejected (empty/traversal): "$path"');
+      RemoteLogger.log('share', 'REJECTED (empty/traversal): "$path"');
       return;
     }
     if (!hasAllowedAudioExtension(path)) {
-      if (kDebugMode) debugPrint('share-receiver: rejected (unsupported extension): "$path"');
+      RemoteLogger.log('share', 'REJECTED (bad extension): "$path"');
       return;
     }
     final allowed = await isPathInsideSandbox(path);
     if (!allowed) {
-      if (kDebugMode) debugPrint('share-receiver: rejected (outside sandbox): "$path"');
+      RemoteLogger.log('share', 'REJECTED (outside sandbox): "$path"');
       return;
     }
-    if (!mounted) return;
-    ref.read(sharedFileProvider.notifier).state = path;
+    if (!mounted) {
+      RemoteLogger.log('share', 'REJECTED (widget unmounted): "$path"');
+      return;
+    }
+    ref.read(sharedFileProvider.notifier).accept(path);
   }
 
   @override
@@ -142,9 +181,7 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         home: ShareHandlerScreen(
           filePath: sharedFile,
-          onDone: () {
-            ref.read(sharedFileProvider.notifier).state = null;
-          },
+          onDone: () => ref.read(sharedFileProvider.notifier).dismiss(),
         ),
       );
     }

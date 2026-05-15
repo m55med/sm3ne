@@ -220,7 +220,7 @@ void _handleUnknownLocation(Ref ref, String location) {
   Future<void>(() async {
     final allowed = await isPathInsideSandbox(path);
     if (allowed) {
-      ref.read(sharedFileProvider.notifier).state = path;
+      ref.read(sharedFileProvider.notifier).accept(path);
     }
   });
 }

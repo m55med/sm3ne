@@ -3,10 +3,32 @@ import Social
 import MobileCoreServices
 import UniformTypeIdentifiers
 
+// TEMPORARY remote diag for the share extension. Helps us see, from the
+// device, whether the extension is firing and what UTI it's getting. Remove
+// once the share-intent bug is closed.
+fileprivate func diag(_ tag: String, _ message: String) {
+  NSLog("[DIAG \(tag)] \(message)")
+  var req = URLRequest(
+    url: URL(string: "https://voice.neojeen.com/api/v1/diag/log")!,
+    timeoutInterval: 4
+  )
+  req.httpMethod = "POST"
+  req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+  let payload: [String: String] = [
+    "tag": String(("ext-" + tag).prefix(40)),
+    "msg": String(message.prefix(480)),
+  ]
+  if let body = try? JSONSerialization.data(withJSONObject: payload) {
+    req.httpBody = body
+    URLSession.shared.dataTask(with: req).resume()
+  }
+}
+
 class ShareViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        diag("life", "viewDidLoad")
         handleSharedAudio()
     }
 
@@ -79,9 +101,11 @@ class ShareViewController: UIViewController {
     ]
 
     private func saveAndRedirect(url: URL) {
+        diag("save", "input url=\(url.lastPathComponent) ext=\(url.pathExtension)")
         // Copy to shared App Group container
         let groupID = "group.com.bisawtak.bisawtak"
         guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID) else {
+            diag("save", "containerURL nil — App Group not accessible from extension!")
             close()
             return
         }
@@ -93,24 +117,32 @@ class ShareViewController: UIViewController {
                 try FileManager.default.removeItem(at: destURL)
             }
             try FileManager.default.copyItem(at: url, to: destURL)
+            diag("save", "✓ copied to App Group: \(destURL.lastPathComponent)")
 
             // Save path to UserDefaults for the main app to pick up
             let userDefaults = UserDefaults(suiteName: groupID)
+            if userDefaults == nil {
+                diag("save", "UserDefaults(suiteName:) nil!")
+            }
             userDefaults?.set(destURL.path, forKey: "shared_audio_path")
             userDefaults?.synchronize()
+            diag("save", "✓ wrote shared_audio_path to App Group")
 
             // Open main app
             let urlScheme = URL(string: "bisawtak://shared")!
             var responder: UIResponder? = self
+            var opened = false
             while responder != nil {
                 if let application = responder as? UIApplication {
                     application.open(urlScheme, options: [:], completionHandler: nil)
+                    opened = true
                     break
                 }
                 responder = responder?.next
             }
+            diag("save", "responder-open attempted opened=\(opened)")
         } catch {
-            print("Error copying file: \(error)")
+            diag("save", "copy error: \(error.localizedDescription)")
         }
 
         close()
