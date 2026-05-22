@@ -1,7 +1,7 @@
 name: bisawtak
 description: "بصوتك - Speech to Text"
 publish_to: 'none'
-version: 1.0.0+21
+version: 1.0.0+22
 
 environment:
   sdk: ^3.11.3
@@ -28,6 +28,10 @@ dependencies:
   firebase_analytics: ^11.3.6
   firebase_crashlytics: ^4.1.6
   firebase_messaging: ^15.1.6
+  # Displays foreground FCM messages as actual system notifications.
+  # firebase_messaging only auto-displays when the app is backgrounded; this
+  # plugin closes the gap so users see notifications regardless of state.
+  flutter_local_notifications: ^18.0.1
   # Reads device model, OS version, marketing name etc. for the device list
   # the admin sees on /devices.
   device_info_plus: ^11.2.0

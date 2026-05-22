@@ -93,6 +93,17 @@
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="ca-app-pub-3940256099942544~3347511713"/>
+        <!-- Firebase Cloud Messaging defaults. Without these, Android 8+
+             refuses to display the notification (no channel) and falls back
+             to the app launcher icon (wrong colour, hard to see). The channel
+             id "bisawtak_default" must match the one we register at runtime
+             via flutter_local_notifications. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="bisawtak_default" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@mipmap/ic_launcher" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
