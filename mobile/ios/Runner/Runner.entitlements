@@ -10,11 +10,9 @@
 	<array>
 		<string>Default</string>
 	</array>
-	<!--
-	  Push notifications are not wired up in this app. Re-add the
-	  aps-environment key (value `development` for debug, `production`
-	  for App Store / TestFlight builds) only when push is actually
-	  implemented, otherwise Apple will reject the binary.
-	-->
+	<!-- Sandbox APNs token (dev/debug only). Release uses
+	     RunnerRelease.entitlements with value "production". -->
+	<key>aps-environment</key>
+	<string>development</string>
 </dict>
 </plist>
