@@ -84,10 +84,9 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                   radius: 44,
                   backgroundColor: Theme.of(context).colorScheme.primaryContainer,
                   child: Text(
-                    (user?.fullName ?? user?.username ?? '?')
-                            .characters
-                            .firstOrNull
-                            ?.toUpperCase() ??
+                    (user?.displayName.isNotEmpty == true
+                            ? user!.displayName.characters.firstOrNull?.toUpperCase()
+                            : null) ??
                         '?',
                     style: TextStyle(fontSize: 34, color: Theme.of(context).colorScheme.primary),
                   ),
@@ -96,7 +95,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               const SizedBox(height: 8),
               Center(
                 child: Text(
-                  '@${user?.username ?? ''}',
+                  user?.email ?? '',
                   style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
               ),
@@ -124,7 +123,6 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 },
               ),
               const SizedBox(height: 12),
-              _ReadOnlyRow(label: 'اسم المستخدم', value: user?.username ?? '-'),
               _ReadOnlyRow(label: 'تسجيل الدخول عبر', value: _providerLabel(user?.authProvider)),
               if (_error != null) ...[
                 const SizedBox(height: 12),

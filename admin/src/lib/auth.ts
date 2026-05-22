@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { clearToken } from "@/lib/api";
 
-type JwtPayload = { sub?: string; username?: string; role?: string; exp?: number };
+type JwtPayload = { sub?: string; role?: string; exp?: number };
 
 function decodeJwt(token: string): JwtPayload | null {
   try {

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 class AppConstants {
   static const String appName = 'بصوتك';
   static const String appNameEn = 'Bisawtak';
@@ -13,13 +15,33 @@ class AppConstants {
 
   // Google Sign-In — the WEB OAuth client ID. Passed to GoogleSignIn as
   // `serverClientId` so the returned idToken's `aud` claim matches what the
-  // backend verifies against (GOOGLE_CLIENT_ID env var). NOT the iOS/Android
-  // client IDs — those are matched automatically by bundle id / package+SHA.
-  static const String googleServerClientId = String.fromEnvironment(
-    'GOOGLE_SERVER_CLIENT_ID',
-    defaultValue:
-        '189277247383-hl6a00rppttpbrbk7v1mmm7e8tqfpa1g.apps.googleusercontent.com',
-  );
+  // backend verifies against. The Android SDK rejects sign-in with
+  // ApiException:10 (DEVELOPER_ERROR) unless the Android OAuth client AND
+  // the Web client used here live in the SAME Google Cloud project — so
+  // each platform has its own web client.
+  //
+  //   • Android Android OAuth client → project `bisawtak-41e56`
+  //   • Android Web client (here)    → project `bisawtak-41e56`
+  //   • iOS    iOS OAuth client      → project `bisawtak`
+  //   • iOS    Web client (here)     → project `bisawtak`
+  //
+  // The backend's GOOGLE_CLIENT_IDS_EXTRA accepts both so tokens from
+  // either platform verify cleanly.
+  static const String _androidGoogleServerClientId =
+      '257623929369-ntkn3lb1ospp3hh4a0kchoqf4mb34hn2.apps.googleusercontent.com';
+  static const String _iosGoogleServerClientId =
+      '189277247383-hl6a00rppttpbrbk7v1mmm7e8tqfpa1g.apps.googleusercontent.com';
+
+  static String get googleServerClientId {
+    // --dart-define overrides everything (useful for local testing against a
+    // staging client). An empty value (the default) falls through to the
+    // platform-specific picks below.
+    const override = String.fromEnvironment('GOOGLE_SERVER_CLIENT_ID');
+    if (override.isNotEmpty) return override;
+    return Platform.isAndroid
+        ? _androidGoogleServerClientId
+        : _iosGoogleServerClientId;
+  }
 
   // Upload limits / allowed file types
   static const int maxUploadBytes = 200 * 1024 * 1024; // 200 MB

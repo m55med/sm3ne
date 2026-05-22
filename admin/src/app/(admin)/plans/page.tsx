@@ -357,7 +357,7 @@ export default function PlansPage() {
                     <tr key={s.user_id} className="border-b last:border-0">
                       <td className="py-2">
                         <Link href={`/users/${s.user_public_id || s.user_id}`} className="hover:underline text-blue-700">
-                          {s.full_name || s.username}
+                          {s.full_name || s.email || "—"}
                         </Link>
                         {s.email && <div className="text-xs text-gray-400">{s.email}</div>}
                       </td>

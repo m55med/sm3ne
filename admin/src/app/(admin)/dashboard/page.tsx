@@ -119,7 +119,7 @@ export default function DashboardPage() {
                 <tbody>
                   {requests.map((r) => (
                     <tr key={r.id} className="border-b last:border-0">
-                      <td className="py-3 font-medium">{r.username}</td>
+                      <td className="py-3 font-medium">{r.full_name || r.email || "—"}</td>
                       <td className="py-3 text-gray-500 max-w-[150px] truncate">
                         {r.filename || "—"}
                       </td>

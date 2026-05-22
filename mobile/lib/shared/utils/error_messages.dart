@@ -97,8 +97,6 @@ String? _mapBackendCode(String? code) {
       return 'يوجد حساب بنفس البريد الإلكتروني. سجّل دخولك بكلمة السر.';
     case 'invalid_credentials':
       return 'بيانات الدخول غير صحيحة.';
-    case 'username_taken':
-      return 'اسم المستخدم محجوز، اختر اسماً آخر.';
     case 'email_taken':
       return 'هذا البريد مستخدم بالفعل.';
     case 'weak_password':

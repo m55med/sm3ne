@@ -394,7 +394,7 @@ export default function TelegramUsersPage() {
                         href={`/users/${t.linked_user_public_id || t.linked_user_id}`}
                         className="text-blue-600 hover:underline text-xs"
                       >
-                        {t.linked_user_username || `#${t.linked_user_id}`}
+                        {t.linked_user_full_name || t.linked_user_email || `#${t.linked_user_id}`}
                       </Link>
                     ) : (
                       <span className="text-gray-400 text-xs">—</span>

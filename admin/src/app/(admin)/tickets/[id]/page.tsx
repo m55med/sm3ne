@@ -90,11 +90,11 @@ export default function AdminTicketDetail() {
             <div className="flex gap-2 items-center text-sm">
               <Badge variant="outline">{TICKET_TYPE_LABEL[ticket.ticket_type] || ticket.ticket_type}</Badge>
               <Badge>{TICKET_STATUS_LABEL[ticket.status] || ticket.status}</Badge>
-              {ticket.username && (
+              {(ticket.user_full_name || ticket.user_email) && (
                 <>
                   <span className="text-gray-400">·</span>
                   <Link href={`/users/${ticket.user_public_id || ""}`} className="text-blue-700 hover:underline">
-                    {ticket.username}
+                    {ticket.user_full_name || ticket.user_email}
                   </Link>
                 </>
               )}
@@ -111,7 +111,7 @@ export default function AdminTicketDetail() {
         <div className="space-y-3">
           {/* الرسالة الأصلية */}
           <MessageBubble
-            authorName={ticket.username || "مستخدم"}
+            authorName={ticket.user_full_name || ticket.user_email || "مستخدم"}
             isAdmin={false}
             message={ticket.message}
             createdAt={ticket.created_at}

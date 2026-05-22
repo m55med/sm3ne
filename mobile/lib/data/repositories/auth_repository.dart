@@ -40,12 +40,12 @@ class AuthRepository {
   Dio get _dio => _api.dio;
 
   Future<AuthTokens> login({
-    required String username,
+    required String email,
     required String password,
   }) async {
     try {
       final resp = await _dio.post('/auth/login', data: {
-        'username': username,
+        'email': email,
         'password': password,
       });
       return AuthTokens.fromJson(Map<String, dynamic>.from(resp.data));
@@ -56,14 +56,12 @@ class AuthRepository {
   }
 
   Future<AuthTokens> register({
-    required String username,
     required String email,
     required String password,
     String? fullName,
   }) async {
     try {
       final resp = await _dio.post('/auth/register', data: {
-        'username': username,
         'email': email,
         'password': password,
         if (fullName != null) 'full_name': fullName,

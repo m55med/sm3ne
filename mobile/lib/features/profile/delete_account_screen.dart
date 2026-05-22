@@ -84,15 +84,21 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
 
       switch (user.authProvider) {
         case 'google':
-          final token = await _freshGoogleToken();
-          if (token == null) {
+          final tokens = await _freshGoogleTokens();
+          if (tokens == null || tokens.idToken == null) {
             setState(() {
               _error = 'تأكيد الهوية عبر Google مطلوب لإتمام الحذف.';
               _busy = false;
             });
             return;
           }
-          body['google_token'] = token;
+          body['google_token'] = tokens.idToken;
+          // Forward the access token too so the backend can call Google's
+          // revoke endpoint — this is what makes Google actually forget the
+          // consent, instead of just our DB rows getting scrubbed.
+          if (tokens.accessToken != null) {
+            body['google_access_token'] = tokens.accessToken;
+          }
           break;
         case 'apple':
           final token = await _freshAppleToken();
@@ -150,7 +156,7 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
     }
   }
 
-  Future<String?> _freshGoogleToken() async {
+  Future<_GoogleTokens?> _freshGoogleTokens() async {
     try {
       final account = await GoogleSignIn(
         scopes: const ['email'],
@@ -158,7 +164,7 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
       ).signIn();
       if (account == null) return null;
       final auth = await account.authentication;
-      return auth.idToken;
+      return _GoogleTokens(idToken: auth.idToken, accessToken: auth.accessToken);
     } catch (_) {
       return null;
     }
@@ -310,22 +316,54 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
             ),
           ],
           const SizedBox(height: AppSpacing.xl),
-          FilledButton.icon(
-            onPressed: _busy ? null : _confirmAndDelete,
-            icon: _busy
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : const Icon(Icons.delete_forever),
-            label: Text(_busy ? 'جارٍ الحذف...' : 'احذف الحساب نهائياً'),
-            style: FilledButton.styleFrom(
-              backgroundColor: errorColor,
-              foregroundColor: Colors.white,
-              minimumSize: const Size.fromHeight(52),
+          // The delete button only materializes once BOTH acknowledgements are
+          // checked — surfaces gravity of the action and removes the
+          // "I clicked by accident" path. Until then we show a neutral hint
+          // explaining what's needed to proceed.
+          if (_ackPermanent && _ackData)
+            FilledButton.icon(
+              onPressed: _busy ? null : _confirmAndDelete,
+              icon: _busy
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.delete_forever),
+              label: Text(_busy ? 'جارٍ الحذف...' : 'احذف الحساب نهائياً'),
+              style: FilledButton.styleFrom(
+                backgroundColor: errorColor,
+                foregroundColor: Colors.white,
+                minimumSize: const Size.fromHeight(52),
+              ),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.md,
+              ),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'وافق على البندين بالأعلى ليظهر زر الحذف.',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
           const SizedBox(height: AppSpacing.sm),
           OutlinedButton(
             onPressed: _busy ? null : () => context.pop(),
@@ -336,3 +374,10 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
     );
   }
 }
+
+class _GoogleTokens {
+  final String? idToken;
+  final String? accessToken;
+  const _GoogleTokens({required this.idToken, required this.accessToken});
+}
+

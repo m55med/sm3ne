@@ -49,11 +49,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  Future<void> login(String username, String password) async {
+  Future<void> login(String email, String password) async {
     state = state.copyWith(status: AuthStatus.loading);
     try {
       final resp = await _api.dio.post('/auth/login', data: {
-        'username': username,
+        'email': email,
         'password': password,
       });
       await _persistTokensFrom(resp.data);
@@ -66,11 +66,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  Future<void> register(String username, String email, String password, String? fullName) async {
+  Future<void> register(String email, String password, String? fullName) async {
     state = state.copyWith(status: AuthStatus.loading);
     try {
       final resp = await _api.dio.post('/auth/register', data: {
-        'username': username,
         'email': email,
         'password': password,
         if (fullName != null) 'full_name': fullName,
@@ -99,13 +98,22 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  Future<void> appleSignIn(String identityToken, {String? nonce}) async {
+  Future<void> appleSignIn(
+    String identityToken, {
+    String? nonce,
+    String? authorizationCode,
+  }) async {
     state = state.copyWith(status: AuthStatus.loading);
     try {
       final payload = <String, dynamic>{'token': identityToken};
       // Raw nonce that hashed to the value baked into the identity token.
       // Backend verifies sha256(nonce) == payload.nonce to defeat replay attacks.
       if (nonce != null) payload['nonce'] = nonce;
+      // Apple's single-use authorization code, exchanged server-side for a
+      // refresh_token (stored to enable /auth/revoke at delete time).
+      if (authorizationCode != null && authorizationCode.isNotEmpty) {
+        payload['authorization_code'] = authorizationCode;
+      }
       final resp = await _api.dio.post('/auth/apple', data: payload);
       await _persistTokensFrom(resp.data);
       await checkAuth();

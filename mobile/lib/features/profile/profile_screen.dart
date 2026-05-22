@@ -13,9 +13,11 @@ class ProfileScreen extends ConsumerWidget {
     final auth = ref.watch(authProvider);
     final user = auth.user;
 
-    // Safe initial — never crash on an empty username/full name.
-    final initial =
-        (user?.fullName ?? user?.username ?? '?').characters.firstOrNull?.toUpperCase() ?? '?';
+    // Safe initial — never crash on empty display info.
+    final initialSource = user?.displayName ?? '';
+    final initial = initialSource.isNotEmpty
+        ? initialSource.characters.firstOrNull?.toUpperCase() ?? '?'
+        : '?';
 
     final scheme = Theme.of(context).colorScheme;
 
@@ -40,10 +42,10 @@ class ProfileScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: AppSpacing.md),
                   Text(
-                    user?.fullName ?? user?.username ?? '',
+                    user?.displayName ?? '',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                   ),
-                  if (user?.email != null)
+                  if (user?.email != null && (user?.fullName?.isNotEmpty ?? false))
                     Text(user!.email!, style: TextStyle(color: scheme.onSurfaceVariant)),
                 ],
               ),

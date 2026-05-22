@@ -5,7 +5,6 @@ from datetime import datetime
 
 class ProfileResponse(BaseModel):
     id: int
-    username: str
     email: Optional[str]
     full_name: Optional[str]
     auth_provider: str
@@ -49,6 +48,11 @@ class AccountDeleteRequest(BaseModel):
     apple_token: Optional[str] = None
     confirmation: bool = False  # F22
     reason: Optional[str] = Field(default=None, max_length=500)
+    # Fresh Google access_token (NOT id_token) the client just obtained — we
+    # forward it to https://oauth2.googleapis.com/revoke so the user is also
+    # un-consented on Google's side. Optional: revoke gracefully no-ops when
+    # missing (the soft-delete on our side still happens).
+    google_access_token: Optional[str] = None
 
 
 class AccountDeleteResponse(BaseModel):

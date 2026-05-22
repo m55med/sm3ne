@@ -10,7 +10,6 @@ export interface AdminStats {
 export interface UserListItem {
   id: number;
   public_id: string | null;
-  username: string;
   email: string | null;
   full_name: string | null;
   role: string;
@@ -46,7 +45,6 @@ export interface UserUsageInfo {
 export interface UserDetail {
   id: number;
   public_id: string | null;
-  username: string;
   email: string | null;
   full_name: string | null;
   role: string;
@@ -95,7 +93,8 @@ export type RequestSource =
 export interface RequestItem {
   id: number;
   user_public_id: string | null;
-  username: string;
+  email: string | null;
+  full_name: string | null;
   api_key_id: number | null;
   api_key_name: string | null;
   filename: string | null;
@@ -124,7 +123,8 @@ export interface SubscriptionLogItem {
   id: number;
   user_id: number;
   user_public_id: string | null;
-  username: string;
+  email: string | null;
+  full_name: string | null;
   plan_id: number;
   plan_name: string;
   plan_source: "free" | "coupon" | "purchase";
@@ -148,7 +148,8 @@ export type TicketType = "contact" | "suggestion" | "bug" | "other";
 export interface TicketSummary {
   public_id: string;
   user_public_id: string | null;
-  username: string | null;
+  user_email: string | null;
+  user_full_name: string | null;
   ticket_type: TicketType;
   subject: string;
   status: TicketStatus;
@@ -178,7 +179,8 @@ export interface TicketReplyItem {
 export interface TicketDetail {
   public_id: string;
   user_public_id: string | null;
-  username: string | null;
+  user_email: string | null;
+  user_full_name: string | null;
   ticket_type: TicketType;
   subject: string;
   message: string;
@@ -204,7 +206,6 @@ export interface AdminTicketListResponse {
 export interface PlanSubscriberItem {
   user_id: number;
   user_public_id: string | null;
-  username: string;
   full_name: string | null;
   email: string | null;
   plan_source: "free" | "coupon" | "purchase";
@@ -328,7 +329,8 @@ export interface TelegramUserItem {
   bio: string | null;
   photo_url: string | null;
   linked_user_id: number | null;
-  linked_user_username: string | null;
+  linked_user_email: string | null;
+  linked_user_full_name: string | null;
   linked_user_public_id: string | null;
   linked_at: string | null;
   last_interaction_at: string | null;

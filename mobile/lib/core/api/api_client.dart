@@ -59,12 +59,18 @@ class ApiClient {
         // --- 401 handling: attempt refresh, else logout signal ---
         if (error.response?.statusCode == 401) {
           final tokenStorage = _ref.read(tokenStorageProvider);
+          final path = error.requestOptions.path;
+          // 401s on auth endpoints (/auth/login, /auth/google, /auth/apple,
+          // /auth/register) are CREDENTIAL errors — wrong password, bad
+          // Google token, etc. — NOT expired sessions. Surfacing them as
+          // "session expired" is misleading and was causing the stale flag
+          // bug after a failed login attempt.
+          final isAuthCall = path.startsWith('/auth/');
           // Avoid infinite recursion on the refresh endpoint itself.
-          final isRefreshCall =
-              error.requestOptions.path.contains('/auth/refresh');
+          final isRefreshCall = path.contains('/auth/refresh');
           final refreshToken = await tokenStorage.getRefreshToken();
 
-          if (refreshToken != null && !isRefreshCall) {
+          if (!isAuthCall && refreshToken != null && !isRefreshCall) {
             final newToken = await _refreshAccessToken(refreshToken);
             if (newToken != null) {
               // Replay the original request with the new token.
@@ -79,10 +85,13 @@ class ApiClient {
             }
           }
 
-          // Refresh failed (or no refresh token). Clear and signal.
-          await tokenStorage.clearAll();
-          if (!_authInvalidationController.isClosed) {
-            _authInvalidationController.add(DateTime.now());
+          if (!isAuthCall) {
+            // Refresh failed (or no refresh token) on a protected request —
+            // the existing session is dead. Clear and signal.
+            await tokenStorage.clearAll();
+            if (!_authInvalidationController.isClosed) {
+              _authInvalidationController.add(DateTime.now());
+            }
           }
         }
         handler.next(error);

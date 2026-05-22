@@ -22,7 +22,7 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-  final _usernameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _obscurePassword = true;
   bool _loading = false;
@@ -49,21 +49,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   void dispose() {
-    _usernameCtrl.dispose();
+    _emailCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _login() async {
     if (_loading) return;
-    final username = _usernameCtrl.text.trim().toLowerCase();
+    final email = _emailCtrl.text.trim().toLowerCase();
     final password = _passwordCtrl.text;
-    if (username.isEmpty || password.isEmpty) return;
+    if (email.isEmpty || password.isEmpty) return;
 
     setState(() => _loading = true);
     // Errors are surfaced through `ref.listen(authProvider, ...)` in build()
     // — do not also catch here, that yields a double snackbar.
-    await ref.read(authProvider.notifier).login(username, password);
+    await ref.read(authProvider.notifier).login(email, password);
     if (ref.read(authProvider).status == AuthStatus.authenticated) {
       await ref.read(analyticsProvider).login('password');
     }
@@ -116,16 +116,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 ),
                 const SizedBox(height: AppSpacing.xxxl),
                 TextField(
-                  controller: _usernameCtrl,
+                  controller: _emailCtrl,
+                  keyboardType: TextInputType.emailAddress,
                   decoration: const InputDecoration(
-                    labelText: 'اسم المستخدم',
-                    prefixIcon: Icon(Icons.person_outline),
+                    labelText: 'البريد الإلكتروني',
+                    prefixIcon: Icon(Icons.mail_outline),
                   ),
                   textInputAction: TextInputAction.next,
                   autocorrect: false,
                   enableSuggestions: false,
                   textCapitalization: TextCapitalization.none,
-                  autofillHints: const [AutofillHints.username],
+                  autofillHints: const [AutofillHints.email],
                   inputFormatters: [
                     FilteringTextInputFormatter.deny(RegExp(r'\s')),
                   ],

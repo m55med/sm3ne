@@ -1,27 +1,25 @@
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, Field
-
-
-# Username constraint shared by register + (future) admin user-create paths.
-# Restricted to ASCII alphanumerics and underscore to keep URL/log routes simple
-# and to block lookalike-unicode account takeovers.
-USERNAME_PATTERN = r"^[a-zA-Z0-9_]+$"
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class RegisterRequest(BaseModel):
-    # F19: enforce username pattern at the schema boundary.
-    username: str = Field(min_length=3, max_length=30, pattern=USERNAME_PATTERN)
-    # F17: validate emails with EmailStr (still optional — username-only signup allowed).
-    email: Optional[EmailStr] = None
-    # Min length is checked at the route layer (F18) so we can also reject
+    # Accessibility-first signup: email + password (+ optional name) only.
+    # `extra="ignore"` lets older clients that still send a `username` field
+    # pass the schema check without erroring.
+    model_config = ConfigDict(extra="ignore")
+
+    email: EmailStr
+    # Min length is checked at the route layer so we can also reject
     # known-weak passwords with a specific error code.
     password: str
     full_name: Optional[str] = Field(default=None, max_length=100)
 
 
 class LoginRequest(BaseModel):
-    username: str
+    model_config = ConfigDict(extra="ignore")
+
+    email: EmailStr
     password: str
 
 
@@ -31,6 +29,11 @@ class SocialAuthRequest(BaseModel):
     # token. Backend will compare sha256(nonce).hex() with payload.nonce when
     # provided. Optional for backwards compatibility with older clients.
     nonce: Optional[str] = None
+    # Apple only: the single-use `authorizationCode` returned alongside the
+    # identity token. Backend exchanges it server-side for a refresh_token
+    # which we store to enable /auth/revoke on account deletion. Optional —
+    # absent on old clients; in that case revoke gracefully no-ops later.
+    authorization_code: Optional[str] = None
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -47,13 +50,21 @@ class ResetPasswordRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
+    # Optional because /auth/refresh doesn't always rotate the refresh token —
+    # only login/register/google/apple do.
+    refresh_token: str | None = None
     token_type: str = "bearer"
 
 
 class RegisterResponse(BaseModel):
     message: str
     access_token: str
+    refresh_token: str | None = None
     token_type: str = "bearer"
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
 
 
 class ChangePasswordRequest(BaseModel):

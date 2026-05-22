@@ -20,7 +20,7 @@ from app.schemas.profile import (
     AccountDeleteRequest, AccountDeleteResponse,
     ProfileResponse, ProfileUpdateRequest, SurveyRequest,
 )
-from app.services import audit_service
+from app.services import audit_service, social_revoke
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 logger = logging.getLogger(__name__)
@@ -193,8 +193,8 @@ async def delete_account(
     audit trails and required deletion of TranscriptionRequest rows referenced
     by foreign keys), we anonymize PII in-place:
 
-      * email/username scrubbed to a deterministic ``deleted_<id>_<rand>``
-        placeholder so unique constraints stay satisfied
+      * email scrubbed to a deterministic ``deleted_<id>_<rand>@deleted.local``
+        placeholder so the unique constraint stays satisfied
       * password hash wiped
       * is_active=False so future logins reject
       * all owned API keys deactivated (cascade-orphan)
@@ -207,12 +207,13 @@ async def delete_account(
 
     # Capture identifiers BEFORE we scrub them (the deletion audit needs them).
     snapshot_public_id = user.public_id
-    snapshot_username = user.username
     snapshot_email = user.email
+    snapshot_provider = user.auth_provider
+    snapshot_provider_id = user.provider_id
+    snapshot_apple_refresh = user.apple_refresh_token
 
     audit = AccountDeletion(
         user_public_id=snapshot_public_id,
-        username_snapshot=snapshot_username,
         email_snapshot=snapshot_email,
         auth_provider=user.auth_provider,
         reason=(body.reason or "")[:500] or None,
@@ -247,21 +248,32 @@ async def delete_account(
 
     # Scrub PII in-place. We use a random suffix so re-deletions don't collide
     # on the unique index (in case the same human re-registers later).
+    # NOTE: we deliberately KEEP provider_id so /auth/google and /auth/apple
+    # can match a re-sign-in attempt and reactivate this row — that's the
+    # safety net for when the provider-side revoke below fails for any reason.
     rand = secrets.token_hex(4)
     user.is_active = False
     user.password_hash = None
     user.email = f"deleted_{user.id}_{rand}@deleted.local"
-    user.username = f"deleted_{user.id}_{rand}"
     user.full_name = None
     user.survey_response = None
-    user.provider_id = None
+    user.apple_refresh_token = None  # one-shot — we still need it below
     db.commit()
+
+    # --- Tell the social provider to forget this user ------------------------
+    # Done AFTER the local commit so a flaky provider doesn't block deletion.
+    # Errors are logged inside the helpers; failure here just means the user
+    # will be re-created if they re-sign-in (reactivation safety net runs).
+    if snapshot_provider == "google" and body.google_access_token:
+        await social_revoke.revoke_google(body.google_access_token)
+    elif snapshot_provider == "apple" and snapshot_apple_refresh:
+        await social_revoke.revoke_apple(snapshot_apple_refresh)
 
     try:
         audit_service.record(
             db, action="auth.account.deleted", actor_user_id=user.id,
             target_type="user", target_id=user.id,
-            metadata={"original_username": snapshot_username},
+            metadata={"original_email": snapshot_email},
             ip_address=get_client_ip(request),
         )
     except Exception:

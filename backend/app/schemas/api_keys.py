@@ -79,7 +79,8 @@ class AdminApiKeyCreateRequest(ApiKeyCreateRequest):
 
 class AdminApiKeyListItem(ApiKeyResponse):
     user_id: int
-    username: str
+    user_email: Optional[str] = None
+    user_full_name: Optional[str] = None
 
 
 class AdminApiKeyListResponse(BaseModel):

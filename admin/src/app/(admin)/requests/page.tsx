@@ -326,10 +326,10 @@ export default function RequestsPage() {
                               href={`/users/${r.user_public_id}`}
                               className="hover:underline text-blue-700"
                             >
-                              {r.username}
+                              {r.full_name || r.email || "—"}
                             </Link>
                           ) : (
-                            r.username
+                            r.full_name || r.email || "—"
                           )}
                         </td>
                         <td className="py-3">

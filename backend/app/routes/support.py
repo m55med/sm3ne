@@ -99,7 +99,8 @@ async def create_ticket(
     return TicketDetail(
         public_id=ticket.public_id,
         user_public_id=user.public_id,
-        username=user.username,
+        user_email=user.email,
+        user_full_name=user.full_name,
         ticket_type=ticket.ticket_type,
         subject=ticket.subject,
         message=ticket.message,
@@ -144,11 +145,17 @@ async def get_my_ticket(
                 _serialize_attachment(a, reply_public_id=reply_public_ids.get(a.reply_id))
             )
 
+    def _author_name(uid: int) -> Optional[str]:
+        u = users.get(uid)
+        if not u:
+            return None
+        return u.full_name or u.email
+
     reply_items = [
         TicketReplyItem(
             public_id=r.public_id,
             is_admin=r.is_admin,
-            author_name=(users.get(r.user_id).full_name if users.get(r.user_id) and users[r.user_id].full_name else (users.get(r.user_id).username if users.get(r.user_id) else None)),
+            author_name=_author_name(r.user_id),
             message=r.message,
             created_at=r.created_at,
             attachments=attachments_by_reply.get(r.id, []),
@@ -157,7 +164,8 @@ async def get_my_ticket(
     return TicketDetail(
         public_id=ticket.public_id,
         user_public_id=user.public_id,
-        username=user.username,
+        user_email=user.email,
+        user_full_name=user.full_name,
         ticket_type=ticket.ticket_type,
         subject=ticket.subject,
         message=ticket.message,
@@ -252,7 +260,7 @@ async def reply_to_my_ticket(
     db.commit()
     db.refresh(reply)
 
-    author_name = user.full_name or user.username
+    author_name = user.full_name or user.email
     return TicketReplyItem(
         public_id=reply.public_id,
         is_admin=False,

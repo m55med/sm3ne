@@ -27,12 +27,19 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     public_id = Column(String(12), unique=True, nullable=True, index=True)
-    username = Column(String(50), unique=True, nullable=False, index=True)
+    # Email is the canonical identifier — required for new accounts. NULL only
+    # exists for legacy social accounts that registered before email became
+    # required; those rows will be backfilled during deletion or login.
     email = Column(String(255), unique=True, nullable=True, index=True)
     password_hash = Column(String(255), nullable=True)  # null for social-only
     full_name = Column(String(100), nullable=True)
     auth_provider = Column(String(20), default="local")  # local, google, apple
     provider_id = Column(String(255), nullable=True)
+    # Apple refresh token captured at first sign-in via the
+    # authorization_code → /auth/token exchange. Required to call Apple's
+    # /auth/revoke when the user deletes their account. Null for users who
+    # signed in before this column existed (revoke gracefully no-ops).
+    apple_refresh_token = Column(String(512), nullable=True)
     role = Column(String(20), default="user")  # user, admin
     is_active = Column(Boolean, default=True)
     # Capped at 20000 chars at the schema layer (Backend-2); kept as Text here so
@@ -259,7 +266,6 @@ class AccountDeletion(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_public_id = Column(String(12), nullable=True, index=True)
-    username_snapshot = Column(String(50), nullable=True)
     email_snapshot = Column(String(255), nullable=True)
     auth_provider = Column(String(20), nullable=True)
     reason = Column(String(500), nullable=True)
@@ -276,7 +282,10 @@ class LoginEvent(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    username_attempted = Column(String(100), nullable=True)
+    # The email the user typed on a failed login — kept (instead of dropped)
+    # so brute-force attempts are still attributable in audit. Schema column
+    # name was `username_attempted` historically; the migration renames it.
+    email_attempted = Column(String(255), nullable=True)
     auth_provider = Column(String(20), nullable=False, default="local")
     event_type = Column(String(20), nullable=False, default="login")  # register | login | refresh
     success = Column(Boolean, default=True, index=True)

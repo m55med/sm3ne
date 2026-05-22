@@ -1,6 +1,5 @@
 class User {
   final int id;
-  final String username;
   final String? email;
   final String? fullName;
   final String authProvider;
@@ -16,7 +15,6 @@ class User {
 
   User({
     required this.id,
-    required this.username,
     this.email,
     this.fullName,
     required this.authProvider,
@@ -29,7 +27,6 @@ class User {
   factory User.fromJson(Map<String, dynamic> json) {
     return User(
       id: json['id'] as int,
-      username: json['username'] as String,
       email: json['email'] as String?,
       fullName: json['full_name'] as String?,
       authProvider: (json['auth_provider'] as String?) ?? 'local',
@@ -43,7 +40,6 @@ class User {
 
   User copyWith({
     int? id,
-    String? username,
     String? email,
     String? fullName,
     String? authProvider,
@@ -54,7 +50,6 @@ class User {
   }) {
     return User(
       id: id ?? this.id,
-      username: username ?? this.username,
       email: email ?? this.email,
       fullName: fullName ?? this.fullName,
       authProvider: authProvider ?? this.authProvider,
@@ -63,6 +58,18 @@ class User {
       createdAt: createdAt ?? this.createdAt,
       currentPlanName: currentPlanName ?? this.currentPlanName,
     );
+  }
+
+  /// Best-effort display name: prefer `fullName`, fall back to the email
+  /// local-part, finally an empty string. Used wherever the UI greets the
+  /// user or labels a record.
+  String get displayName {
+    final name = fullName?.trim();
+    if (name != null && name.isNotEmpty) return name;
+    final mail = email?.trim();
+    if (mail == null || mail.isEmpty) return '';
+    final at = mail.indexOf('@');
+    return at > 0 ? mail.substring(0, at) : mail;
   }
 
   /// True when the user is on a paid plan. Free plan (or missing plan) → false.

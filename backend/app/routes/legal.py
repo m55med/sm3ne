@@ -188,7 +188,7 @@ async def privacy_en():
 
 <h2>1. Data We Collect</h2>
 <ul>
-  <li><strong>Account data:</strong> username, email, full name, sign-in method (Google/Apple/password).</li>
+  <li><strong>Account data:</strong> email, full name (optional), sign-in method (Google/Apple/password).</li>
   <li><strong>Audio files:</strong> files you upload or record for transcription. Processed immediately and deleted from our server.</li>
   <li><strong>Transcribed text:</strong> only the resulting text is kept, linked to your account for later access.</li>
   <li><strong>Usage data:</strong> request counts, timestamps, IP, device type and OS (for security and analytics).</li>

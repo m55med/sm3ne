@@ -84,7 +84,8 @@ def _to_item(db: Session, row: TelegramUser) -> AdminTelegramUserItem:
         bio=row.bio,
         photo_url=None,  # resolved on detail endpoint (round-trip per row is expensive)
         linked_user_id=row.linked_user_id,
-        linked_user_username=linked.username if linked else None,
+        linked_user_email=linked.email if linked else None,
+        linked_user_full_name=linked.full_name if linked else None,
         linked_user_public_id=linked.public_id if linked else None,
         linked_at=row.linked_at,
         last_interaction_at=row.last_interaction_at,

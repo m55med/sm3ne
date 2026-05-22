@@ -129,7 +129,7 @@ export default function SubscriptionsPage() {
                           href={`/users/${s.user_public_id || s.user_id}`}
                           className="hover:underline text-blue-700"
                         >
-                          {s.username}
+                          {s.full_name || s.email || "—"}
                         </Link>
                       </td>
                       <td className="py-3">

@@ -179,7 +179,7 @@ async def _handle_command(
         # No payload — show contextual welcome.
         if tg_user.linked_user_id is not None:
             user = db.query(User).filter(User.id == tg_user.linked_user_id).first()
-            first_name = (user.full_name or user.username) if user else (tg_user.first_name or "")
+            first_name = (user.full_name or user.email) if user else (tg_user.first_name or "")
             await _safe_send(chat_id, telegram_bot_messages.render(
                 db, "welcome_linked", first_name=first_name,
             ))
@@ -227,7 +227,7 @@ async def _handle_link_attempt(
         await _safe_send(chat_id, telegram_bot_messages.render(db, key))
         return
 
-    first_name = (linked_user.full_name or linked_user.username) if linked_user else (tg_user.first_name or "")
+    first_name = (linked_user.full_name or linked_user.email) if linked_user else (tg_user.first_name or "")
     await _safe_send(chat_id, telegram_bot_messages.render(
         db, "link_success", first_name=first_name,
     ))
@@ -262,7 +262,7 @@ async def _handle_status(db: Session, tg_user: TelegramUser, chat_id: int) -> No
 
     await _safe_send(chat_id, telegram_bot_messages.render(
         db, "status_linked",
-        username=user.full_name or user.username,
+        username=user.full_name or user.email or "",
         plan=plan.name if plan else "free",
         used_today=used_today,
         daily_limit=daily_limit_label,

@@ -104,9 +104,9 @@ export default function TicketsPage() {
                       </Link>
                     </td>
                     <td className="py-3">
-                      {t.username ? (
+                      {(t.user_full_name || t.user_email) ? (
                         <Link href={`/users/${t.user_public_id || ""}`} className="hover:underline">
-                          {t.username}
+                          {t.user_full_name || t.user_email}
                         </Link>
                       ) : (
                         <span className="text-gray-400">—</span>

@@ -167,9 +167,15 @@ class SocialAuthButtons extends ConsumerWidget {
       // Forward the identity token AND the raw nonce. Backend recomputes
       // sha256(rawNonce) and compares with the `nonce` claim Apple put inside
       // the identity token — defeats replay attacks.
-      await ref
-          .read(authProvider.notifier)
-          .appleSignIn(identityToken, nonce: rawNonce);
+      //
+      // Also forward Apple's one-time `authorizationCode` — the backend
+      // exchanges it server-side for a refresh_token used at account-deletion
+      // time to call /auth/revoke (so Apple forgets this user too).
+      await ref.read(authProvider.notifier).appleSignIn(
+            identityToken,
+            nonce: rawNonce,
+            authorizationCode: credential.authorizationCode,
+          );
       if (ref.read(authProvider).status == AuthStatus.authenticated) {
         await ref.read(analyticsProvider).login('apple');
       }

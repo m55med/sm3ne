@@ -16,7 +16,6 @@ class RegisterScreen extends ConsumerStatefulWidget {
 
 class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _usernameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _passwordConfirmCtrl = TextEditingController();
@@ -25,12 +24,10 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   bool _obscureConfirm = true;
   bool _loading = false;
 
-  static final _usernameRegex = RegExp(r'^[a-zA-Z0-9_]{3,30}$');
   static final _emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
 
   @override
   void dispose() {
-    _usernameCtrl.dispose();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _passwordConfirmCtrl.dispose();
@@ -39,13 +36,10 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   }
 
   Future<void> _register() async {
-    // Guard against double submission. `auth.status == loading` is also
-    // checked at the button level so the UX is consistent.
     if (_loading) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    final username = _usernameCtrl.text.trim().toLowerCase();
-    final email = _emailCtrl.text.trim();
+    final email = _emailCtrl.text.trim().toLowerCase();
     final password = _passwordCtrl.text;
     final fullName = _nameCtrl.text.trim();
 
@@ -53,7 +47,6 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     // Errors are surfaced through `ref.listen(authProvider, ...)` in build()
     // — duplicating in a try/catch produces two snackbars.
     await ref.read(authProvider.notifier).register(
-          username,
           email,
           password,
           fullName.isNotEmpty ? fullName : null,
@@ -101,52 +94,37 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   Text(
-                    'أنشئ حسابك وابدأ تحويل الصوت إلى نص',
+                    'بريدك وكلمة سر فقط — بسيطة وآمنة',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: AppSpacing.xxl),
                   TextFormField(
                     controller: _nameCtrl,
-                    decoration: const InputDecoration(labelText: 'الاسم الكامل', prefixIcon: Icon(Icons.badge_outlined)),
+                    decoration: const InputDecoration(
+                      labelText: 'الاسم (اختياري)',
+                      prefixIcon: Icon(Icons.badge_outlined),
+                    ),
                     textInputAction: TextInputAction.next,
                     autofillHints: const [AutofillHints.name],
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
-                    controller: _usernameCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'اسم المستخدم *',
-                      prefixIcon: Icon(Icons.person_outline),
-                      helperText: 'حروف إنجليزية وأرقام و _ فقط (3-30 حرف)',
-                    ),
-                    textInputAction: TextInputAction.next,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    textCapitalization: TextCapitalization.none,
-                    autofillHints: const [AutofillHints.newUsername],
-                    inputFormatters: [FilteringTextInputFormatter.deny(RegExp(r'\s'))],
-                    validator: (v) {
-                      final value = (v ?? '').trim();
-                      if (value.isEmpty) return 'اسم المستخدم مطلوب';
-                      if (!_usernameRegex.hasMatch(value)) {
-                        return 'اسم المستخدم يجب أن يحتوي على حروف وأرقام فقط';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
                     controller: _emailCtrl,
-                    decoration: const InputDecoration(labelText: 'البريد الإلكتروني', prefixIcon: Icon(Icons.email_outlined)),
+                    decoration: const InputDecoration(
+                      labelText: 'البريد الإلكتروني *',
+                      prefixIcon: Icon(Icons.mail_outline),
+                    ),
                     keyboardType: TextInputType.emailAddress,
                     textInputAction: TextInputAction.next,
                     autocorrect: false,
                     enableSuggestions: false,
+                    textCapitalization: TextCapitalization.none,
                     autofillHints: const [AutofillHints.email],
+                    inputFormatters: [FilteringTextInputFormatter.deny(RegExp(r'\s'))],
                     validator: (v) {
                       final value = (v ?? '').trim();
-                      if (value.isEmpty) return null; // email is optional
+                      if (value.isEmpty) return 'البريد الإلكتروني مطلوب';
                       if (!_emailRegex.hasMatch(value)) return 'بريد إلكتروني غير صحيح';
                       return null;
                     },

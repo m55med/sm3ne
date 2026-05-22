@@ -126,7 +126,9 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
               _Header(ticket: t),
               const SizedBox(height: 16),
               _MessageBubble(
-                authorName: t['username']?.toString() ?? 'أنت',
+                authorName: (t['user_full_name'] as String?) ??
+                    (t['user_email'] as String?) ??
+                    'أنت',
                 message: t['message']?.toString() ?? '',
                 isAdmin: false,
                 createdAt: t['created_at']?.toString(),

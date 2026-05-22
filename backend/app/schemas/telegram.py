@@ -51,7 +51,8 @@ class AdminTelegramUserItem(BaseModel):
     bio: Optional[str]
     photo_url: Optional[str] = None
     linked_user_id: Optional[int]
-    linked_user_username: Optional[str] = None
+    linked_user_email: Optional[str] = None
+    linked_user_full_name: Optional[str] = None
     linked_user_public_id: Optional[str] = None
     linked_at: Optional[datetime]
     last_interaction_at: Optional[datetime]

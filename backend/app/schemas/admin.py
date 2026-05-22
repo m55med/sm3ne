@@ -15,7 +15,6 @@ class AdminStatsResponse(BaseModel):
 class UserListItem(BaseModel):
     id: int
     public_id: Optional[str] = None
-    username: str
     email: Optional[str]
     full_name: Optional[str]
     role: str
@@ -88,7 +87,6 @@ class UserSubscriptionInfo(BaseModel):
 class UserDetailResponse(BaseModel):
     id: int
     public_id: Optional[str] = None
-    username: str
     email: Optional[str]
     full_name: Optional[str]
     role: str
@@ -112,7 +110,8 @@ class SubscriptionLogItem(BaseModel):
     id: int
     user_id: int
     user_public_id: Optional[str] = None
-    username: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
     plan_id: int
     plan_name: str
     plan_source: str  # free | coupon | purchase
@@ -133,7 +132,6 @@ class SubscriptionLogResponse(BaseModel):
 class PlanSubscriberItem(BaseModel):
     user_id: int
     user_public_id: Optional[str] = None
-    username: str
     full_name: Optional[str] = None
     email: Optional[str] = None
     plan_source: str
@@ -146,7 +144,8 @@ class PlanSubscriberItem(BaseModel):
 class RequestListItem(BaseModel):
     id: int
     user_public_id: Optional[str] = None
-    username: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
     api_key_id: Optional[int] = None
     api_key_name: Optional[str] = None
     filename: Optional[str]

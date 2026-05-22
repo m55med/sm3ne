@@ -21,9 +21,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get email => 'البريد الإلكتروني';
 
   @override
-  String get username => 'اسم المستخدم';
-
-  @override
   String get password => 'كلمة السر';
 
   @override

@@ -55,7 +55,7 @@ export default function PrivacyPolicyAr() {
             (أ) بيانات الحساب
           </h3>
           <ul className="list-disc pe-6 space-y-1">
-            <li>الاسم الكامل، اسم المستخدم، والبريد الإلكتروني (إذا سجّلت).</li>
+            <li>الاسم (اختياري) والبريد الإلكتروني (للحسابات المسجّلة بكلمة سر).</li>
             <li>
               معرّف مزود الهوية لو سجّلت بحساب Google أو Apple (لا نخزّن كلمة
               السر الخاصة بهم).
@@ -171,7 +171,7 @@ export default function PrivacyPolicyAr() {
           </p>
           <ul className="list-disc pe-6 space-y-1">
             <li>
-              يُلغَى حسابك ويُستبدل بريدك واسم المستخدم بنصّ مُجهَّل
+              يُلغَى حسابك ويُستبدل بريدك بقيمة مُجهَّلة
               (anonymized).
             </li>
             <li>

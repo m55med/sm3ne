@@ -54,7 +54,7 @@ export default function PrivacyPolicyEn() {
             (a) Account data
           </h3>
           <ul className="list-disc pl-6 space-y-1">
-            <li>Full name, username, and email (if you register).</li>
+            <li>Full name (optional) and email (for password-based accounts).</li>
             <li>
               Identity provider ID if you sign in with Google or Apple
               (we never store their passwords).
@@ -180,8 +180,8 @@ export default function PrivacyPolicyEn() {
           </p>
           <ul className="list-disc pl-6 space-y-1">
             <li>
-              Your account is deactivated and your email/username are
-              replaced with anonymized values.
+              Your account is deactivated and your email is replaced with
+              an anonymized value.
             </li>
             <li>
               We retain an anonymized record for financial audits and to

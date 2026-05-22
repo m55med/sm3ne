@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy import text
 
-from app.core.config import executor, ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_EMAIL
+from app.core.config import executor, ADMIN_PASSWORD, ADMIN_EMAIL
 from app.auth.password import hash_password
 from app.db.database import create_tables, SessionLocal
 from app.db.models import User, Plan
@@ -46,6 +46,34 @@ def _run_idempotent_ddl(db):
         # password_changed_at supports JWT revocation on password change.
         # Backend-3 owns the SQLAlchemy model column; we only ensure the DB column exists.
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP NULL",
+        # Username removal (accessibility-focused simplification): the column
+        # is dropped CASCADE so the unique index + any FKs disappear with it.
+        # Email is now the canonical identifier. Telegram's own `username`
+        # column lives on `telegram_users` and is unaffected.
+        "ALTER TABLE users DROP COLUMN IF EXISTS username CASCADE",
+        # Apple refresh token used to revoke the user's authorization at
+        # /auth/revoke when they delete their account. Stored encrypted at
+        # rest only on the postgres volume — never returned over API.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_refresh_token VARCHAR(512)",
+        # login_events.username_attempted → email_attempted (failed-login audit
+        # now records the email the user typed). Idempotent: only runs if the
+        # old column still exists.
+        """DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'login_events' AND column_name = 'username_attempted'
+            ) THEN
+                ALTER TABLE login_events RENAME COLUMN username_attempted TO email_attempted;
+            END IF;
+        END $$""",
+        # Widen to 255 so future emails fit without truncation. Safe even when
+        # the column has already been widened — Postgres treats this as no-op.
+        "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS email_attempted VARCHAR(255)",
+        "ALTER TABLE login_events ALTER COLUMN email_attempted TYPE VARCHAR(255)",
+        # account_deletions kept username_snapshot for audit purposes. Now that
+        # we don't have a username, drop it. email_snapshot is the audit trail.
+        "ALTER TABLE account_deletions DROP COLUMN IF EXISTS username_snapshot",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS plan_name_at_request VARCHAR(50)",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS plan_source_at_request VARCHAR(20)",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS daily_limit_at_request INTEGER",
@@ -67,7 +95,6 @@ def _run_idempotent_ddl(db):
         """CREATE TABLE IF NOT EXISTS account_deletions (
             id SERIAL PRIMARY KEY,
             user_public_id VARCHAR(12),
-            username_snapshot VARCHAR(50),
             email_snapshot VARCHAR(255),
             auth_provider VARCHAR(20),
             reason VARCHAR(500),
@@ -80,7 +107,7 @@ def _run_idempotent_ddl(db):
         """CREATE TABLE IF NOT EXISTS login_events (
             id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES users(id),
-            username_attempted VARCHAR(100),
+            email_attempted VARCHAR(255),
             auth_provider VARCHAR(20) NOT NULL DEFAULT 'local',
             event_type VARCHAR(20) NOT NULL DEFAULT 'login',
             success BOOLEAN DEFAULT TRUE,
@@ -346,7 +373,6 @@ def _seed_db():
 
         if not db.query(User).filter(User.role == "admin").first():
             admin = User(
-                username=ADMIN_USERNAME,
                 email=ADMIN_EMAIL,
                 password_hash=hash_password(ADMIN_PASSWORD),
                 role="admin",
@@ -355,7 +381,7 @@ def _seed_db():
             )
             db.add(admin)
             db.commit()
-            print(f"Admin user '{ADMIN_USERNAME}' created.")
+            print(f"Admin user '{ADMIN_EMAIL}' created.")
     finally:
         db.close()
 

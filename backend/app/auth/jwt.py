@@ -9,6 +9,7 @@ from app.core.config import (
     ALGORITHM,
     JWT_AUDIENCE,
     JWT_ISSUER,
+    REFRESH_TOKEN_EXPIRE_DAYS,
     SECRET_KEY,
     TOKEN_EXPIRE_MINUTES,
 )
@@ -18,19 +19,63 @@ from app.db.models import User
 bearer_scheme = HTTPBearer()
 
 
-def create_access_token(user_id: int, username: str, role: str = "user") -> str:
+def create_access_token(user_id: int, role: str = "user") -> str:
+    """Mints a short-lived access JWT. The `username` claim used to be in the
+    payload — it was dropped along with the username column. Anything that
+    needs the display name re-reads it from the user row."""
     now = datetime.now(timezone.utc)
     expire = now + timedelta(minutes=TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": str(user_id),
-        "username": username,
         "role": role,
         "iat": int(now.timestamp()),
         "iss": JWT_ISSUER,
         "aud": JWT_AUDIENCE,
         "exp": expire,
+        "typ": "access",
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def create_refresh_token(user_id: int) -> str:
+    """Long-lived token whose ONLY job is to issue new access tokens via
+    POST /auth/refresh. Doesn't carry role/username — we re-read them from
+    the DB on refresh so privilege changes propagate within one access cycle."""
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    payload = {
+        "sub": str(user_id),
+        "iat": int(now.timestamp()),
+        "iss": JWT_ISSUER,
+        "aud": JWT_AUDIENCE,
+        "exp": expire,
+        "typ": "refresh",
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_refresh_token(token: str) -> int:
+    """Validates a refresh token and returns the user_id. Raises 401 on any
+    invalid/expired/wrong-type token."""
+    try:
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+            issuer=JWT_ISSUER,
+            audience=JWT_AUDIENCE,
+            options={"require": ["exp", "iat", "iss", "aud"]},
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+    if payload.get("typ") != "refresh":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not a refresh token")
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+    return int(sub)
 
 
 def get_current_user(
@@ -50,6 +95,10 @@ def get_current_user(
         user_id = payload.get("sub")
         if user_id is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        # Refresh tokens must NEVER be accepted as access tokens. Older tokens
+        # without a "typ" claim default to "access" for backwards compat.
+        if payload.get("typ", "access") != "access":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong token type")
         iat_raw = payload.get("iat")
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")

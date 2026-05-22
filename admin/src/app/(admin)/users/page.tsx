@@ -47,7 +47,7 @@ export default function UsersPage() {
     setMutatingId(target.id);
     try {
       await api(`/admin/users/${target.id}`, { method: "DELETE" });
-      toast.success(`تم تعطيل ${target.username}`);
+      toast.success(`تم تعطيل ${target.full_name || target.email || "الحساب"}`);
       await load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "فشل التعطيل");
@@ -104,7 +104,7 @@ export default function UsersPage() {
                     <td className="py-3 text-gray-400">{u.id}</td>
                     <td className="py-3 font-medium">
                       <Link href={`/users/${u.public_id || u.id}`} className="hover:underline">
-                        {u.full_name || u.username}
+                        {u.full_name || u.email || "—"}
                       </Link>
                     </td>
                     <td className="py-3 text-gray-500">{u.email || "-"}</td>
@@ -160,7 +160,7 @@ export default function UsersPage() {
         open={confirmTarget !== null}
         onOpenChange={(open) => { if (!open) setConfirmTarget(null); }}
         title="تعطيل الحساب؟"
-        description={confirmTarget ? `سيتم تعطيل حساب "${confirmTarget.username}".` : ""}
+        description={confirmTarget ? `سيتم تعطيل حساب "${confirmTarget.full_name || confirmTarget.email || ""}".` : ""}
         confirmLabel="تعطيل"
         destructive
         onConfirm={performDelete}

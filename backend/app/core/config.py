@@ -103,6 +103,9 @@ if len(SECRET_KEY) < 32:
     )
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_MINUTES = int(os.getenv("TOKEN_EXPIRE_MINUTES", "1440"))
+# Refresh tokens live long enough that an active user rarely re-logs in. 60d
+# matches what the major consumer apps (Slack, Discord, Spotify) ship with.
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "60"))
 JWT_ISSUER = "bisawtak"
 JWT_AUDIENCE = "bisawtak-app"
 
@@ -146,14 +149,26 @@ APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID", "").strip()
 # If APPLE_CLIENT_ID is empty, /auth/apple endpoints should return 503; verify
 # function in app/auth/social.py enforces this at request time.
 
+# Apple Sign In private key (.p8 file from Apple Developer → Keys → "Sign in
+# with Apple" key). Required ONLY for server-driven account-deletion revoke at
+# https://appleid.apple.com/auth/revoke. If unset, revoke gracefully no-ops
+# (the user gets soft-deleted on our side but Apple still remembers them —
+# next sign-in re-creates the account). Two ways to provide it:
+#   APPLE_SIGNIN_PRIVATE_KEY_PATH = "/run/secrets/apple_signin.p8"   (preferred)
+#   APPLE_SIGNIN_PRIVATE_KEY_PEM  = "-----BEGIN PRIVATE KEY-----\n..."  (inline)
+APPLE_SIGNIN_PRIVATE_KEY_PATH = os.getenv("APPLE_SIGNIN_PRIVATE_KEY_PATH", "").strip()
+APPLE_SIGNIN_PRIVATE_KEY_PEM = os.getenv("APPLE_SIGNIN_PRIVATE_KEY_PEM", "")
+
 # -----------------------------------------------------------------------------
 # Admin bootstrap (required, strong password)
 # -----------------------------------------------------------------------------
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@bisawtak.com").strip()
-if not ADMIN_USERNAME:
-    raise RuntimeError("ADMIN_USERNAME is required (no default allowed).")
+# ADMIN_USERNAME was historically required for bootstrap; the column has been
+# dropped so the env var is now ignored. Kept here as a deprecated alias so
+# environments that still set it don't fail to start.
+if not ADMIN_EMAIL:
+    raise RuntimeError("ADMIN_EMAIL is required.")
 if not ADMIN_PASSWORD or len(ADMIN_PASSWORD) < 12:
     raise RuntimeError(
         "ADMIN_PASSWORD is missing or shorter than 12 characters. Set a strong "

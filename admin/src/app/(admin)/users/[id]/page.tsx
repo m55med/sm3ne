@@ -228,15 +228,17 @@ export default function UserDetailPage() {
           ? "إلغاء الاشتراك الحالي؟"
           : "";
 
+  const displayName = user.full_name || user.email || "";
+
   const confirmDescription =
     confirmKind === "role"
       ? user.role === "admin"
-        ? `سيتم إلغاء صلاحية الأدمن عن "${user.username}".`
-        : `سيتم ترقية "${user.username}" إلى أدمن.`
+        ? `سيتم إلغاء صلاحية الأدمن عن "${displayName}".`
+        : `سيتم ترقية "${displayName}" إلى أدمن.`
       : confirmKind === "active"
         ? user.is_active
-          ? `سيتم منع "${user.username}" من الدخول.`
-          : `سيتم استعادة وصول "${user.username}".`
+          ? `سيتم منع "${displayName}" من الدخول.`
+          : `سيتم استعادة وصول "${displayName}".`
         : confirmKind === "cancelSub"
           ? "ستنتهي الباقة فوراً ويرجع المستخدم للمجاني."
           : "";
@@ -283,7 +285,7 @@ export default function UserDetailPage() {
         </div>
       )}
 
-      <h1 className="text-2xl font-bold text-gray-900">{user.full_name || user.username}</h1>
+      <h1 className="text-2xl font-bold text-gray-900">{displayName || "—"}</h1>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* البيانات الشخصية */}
@@ -291,7 +293,6 @@ export default function UserDetailPage() {
           <h2 className="text-lg font-bold mb-4">البيانات الشخصية</h2>
           <div className="space-y-3 text-sm">
             <Row label="الاسم" value={user.full_name || "-"} />
-            <Row label="المستخدم" value={user.username} />
             <Row label="الإيميل" value={user.email || "-"} />
             <Row label="التسجيل عبر" value={<Badge variant="secondary">{user.auth_provider}</Badge>} />
             <Row label="تاريخ التسجيل" value={formatDateTime(user.created_at)} />

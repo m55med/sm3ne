@@ -6,13 +6,19 @@ from app.core.config import limiter
 from app.core.lifespan import generate_public_id
 from app.db.database import get_db
 from app.db.models import LoginEvent, PasswordReset, User
-from app.auth.jwt import create_access_token, get_current_user
+from app.auth.jwt import (
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+    get_current_user,
+)
 from app.auth.password import hash_password, verify_password
 from app.auth.social import verify_google_token, verify_apple_token
+from app.services import social_revoke
 from app.schemas.auth import (
     LogoutResponse,
     RegisterRequest, LoginRequest, SocialAuthRequest,
-    ForgotPasswordRequest, ResetPasswordRequest,
+    ForgotPasswordRequest, RefreshTokenRequest, ResetPasswordRequest,
     TokenResponse, RegisterResponse,
 )
 from app.services import audit_service
@@ -52,23 +58,47 @@ def _validate_password_strength(password: str) -> None:
         raise HTTPException(400, "Password is too common; please choose another")
 
 
-def _unique_username(db: Session, base: str) -> str:
-    """F20: ensure the candidate username doesn't collide with an existing row.
-    Appends a numeric suffix until free. Used by Google/Apple flows where we
-    derive a username from the social profile."""
-    # Strip to allowed charset (pattern ^[a-zA-Z0-9_]+$) so social emails like
-    # "first.last@gmail.com" yield "firstlast" not "first.last".
-    cleaned = "".join(ch for ch in base if ch.isalnum() or ch == "_") or "user"
-    cleaned = cleaned[:25]  # leave room for "_999" suffix within max_length=30
-    if not db.query(User).filter(User.username == cleaned).first():
-        return cleaned
-    # Try numeric suffixes; cap at 999 to avoid a runaway loop in pathological cases.
-    for n in range(2, 1000):
-        candidate = f"{cleaned}_{n}"
-        if not db.query(User).filter(User.username == candidate).first():
-            return candidate
-    # Extremely unlikely — fall back to a random suffix from public_id.
-    return f"{cleaned}_{generate_public_id()[:6]}"
+def _reactivate_if_soft_deleted(
+    user: User,
+    *,
+    email_from_provider: str | None,
+    full_name_from_provider: str | None,
+    db: Session,
+) -> bool:
+    """Safety net for the "user deleted, signs in again with same Google/Apple
+    account" flow when our server-side revoke at the provider failed or was
+    never configured.
+
+    If ``user`` is currently soft-deleted (is_active=False and the email looks
+    like the ``deleted_<id>_<rand>@deleted.local`` placeholder), restore it
+    in place: flip is_active back on, push the provider's current email/name
+    over the scrubbed values. Returns True if a reactivation happened so the
+    caller can audit-log it as a fresh registration."""
+    if user.is_active:
+        return False
+    scrubbed = (user.email or "").endswith("@deleted.local")
+    if not scrubbed:
+        return False
+    user.is_active = True
+    if email_from_provider:
+        # Try to push the real email back. If a NEW user has registered with
+        # this email in the meantime, the unique-constraint will trip — we
+        # rollback that specific change and keep the scrubbed value. The
+        # account still becomes usable; the user just can't reclaim their
+        # email until the conflict resolves.
+        original_email = user.email
+        user.email = email_from_provider.lower().strip()
+        try:
+            db.flush()
+        except Exception:
+            db.rollback()
+            user.email = original_email
+            db.add(user)
+    if full_name_from_provider and not user.full_name:
+        user.full_name = full_name_from_provider
+    db.commit()
+    db.refresh(user)
+    return True
 
 
 def _record_login(
@@ -76,7 +106,7 @@ def _record_login(
     request: Request,
     *,
     user_id: int | None,
-    username_attempted: str | None,
+    email_attempted: str | None,
     provider: str,
     event_type: str,
     success: bool,
@@ -88,7 +118,7 @@ def _record_login(
         ip = get_client_ip(request)
         evt = LoginEvent(
             user_id=user_id,
-            username_attempted=username_attempted,
+            email_attempted=email_attempted,
             auth_provider=provider,
             event_type=event_type,
             success=success,
@@ -109,25 +139,20 @@ def _record_login(
 @router.post("/register", response_model=RegisterResponse)
 @limiter.limit("3/minute")
 async def register(body: RegisterRequest, request: Request, db: Session = Depends(get_db)):
-    # Schema already enforces username pattern (F19) and email shape (F17).
-    # Password strength is route-level (F18) so we can return a precise error.
+    # Schema enforces email shape. Password strength is route-level so we
+    # can return a precise error.
     _validate_password_strength(body.password)
 
-    if db.query(User).filter(User.username == body.username).first():
-        _record_login(db, request, user_id=None, username_attempted=body.username,
-                      provider="local", event_type="register", success=False,
-                      error_message="username_taken")
-        raise HTTPException(409, "Username already exists")
-    if body.email and db.query(User).filter(User.email == body.email).first():
-        _record_login(db, request, user_id=None, username_attempted=body.username,
+    email_normalized = body.email.lower().strip()
+    if db.query(User).filter(User.email == email_normalized).first():
+        _record_login(db, request, user_id=None, email_attempted=email_normalized,
                       provider="local", event_type="register", success=False,
                       error_message="email_taken")
         raise HTTPException(409, "Email already exists")
 
     user = User(
         public_id=generate_public_id(),
-        username=body.username,
-        email=body.email,
+        email=email_normalized,
         password_hash=hash_password(body.password),
         full_name=body.full_name,
         auth_provider="local",
@@ -136,31 +161,39 @@ async def register(body: RegisterRequest, request: Request, db: Session = Depend
     db.commit()
     db.refresh(user)
 
-    _record_login(db, request, user_id=user.id, username_attempted=user.username,
+    _record_login(db, request, user_id=user.id, email_attempted=user.email,
                   provider="local", event_type="register", success=True)
-    token = create_access_token(user.id, user.username, user.role)
-    return {"message": "User created", "access_token": token, "token_type": "bearer"}
+    return {
+        "message": "User created",
+        "access_token": create_access_token(user.id, user.role),
+        "refresh_token": create_refresh_token(user.id),
+        "token_type": "bearer",
+    }
 
 
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("5/minute")
 async def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == body.username).first()
+    email_normalized = body.email.lower().strip()
+    user = db.query(User).filter(User.email == email_normalized).first()
     if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
         _record_login(db, request, user_id=user.id if user else None,
-                      username_attempted=body.username, provider="local",
+                      email_attempted=email_normalized, provider="local",
                       event_type="login", success=False, error_message="invalid_credentials")
-        raise HTTPException(401, "Invalid username or password")
+        raise HTTPException(401, "Invalid email or password")
     if not user.is_active:
-        _record_login(db, request, user_id=user.id, username_attempted=user.username,
+        _record_login(db, request, user_id=user.id, email_attempted=user.email,
                       provider="local", event_type="login", success=False,
                       error_message="account_deactivated")
         raise HTTPException(403, "Account is deactivated")
 
-    _record_login(db, request, user_id=user.id, username_attempted=user.username,
+    _record_login(db, request, user_id=user.id, email_attempted=user.email,
                   provider="local", event_type="login", success=True)
-    token = create_access_token(user.id, user.username, user.role)
-    return {"access_token": token, "token_type": "bearer"}
+    return {
+        "access_token": create_access_token(user.id, user.role),
+        "refresh_token": create_refresh_token(user.id),
+        "token_type": "bearer",
+    }
 
 
 @router.post("/google", response_model=TokenResponse)
@@ -168,11 +201,13 @@ async def login(body: LoginRequest, request: Request, db: Session = Depends(get_
 async def google_auth(body: SocialAuthRequest, request: Request, db: Session = Depends(get_db)):
     info = await verify_google_token(body.token)
     if not info:
-        _record_login(db, request, user_id=None, username_attempted=None,
+        _record_login(db, request, user_id=None, email_attempted=None,
                       provider="google", event_type="login", success=False,
                       error_message="invalid_google_token")
         raise HTTPException(401, "Invalid Google token")
 
+    # Match by provider_id WITHOUT the is_active filter so we can reactivate
+    # a soft-deleted account in place (and avoid creating an orphan twin).
     user = db.query(User).filter(
         User.provider_id == info["provider_id"], User.auth_provider == "google"
     ).first()
@@ -185,7 +220,7 @@ async def google_auth(body: SocialAuthRequest, request: Request, db: Session = D
             # Exception: admin accounts (operator/owner) — see Apple endpoint below.
             if existing.auth_provider == "local":
                 if existing.role != "admin":
-                    _record_login(db, request, user_id=existing.id, username_attempted=existing.username,
+                    _record_login(db, request, user_id=existing.id, email_attempted=existing.email,
                                   provider="google", event_type="login", success=False,
                                   error_message="account_exists_local")
                     raise HTTPException(
@@ -203,14 +238,19 @@ async def google_auth(body: SocialAuthRequest, request: Request, db: Session = D
                 db.refresh(existing)
             user = existing
 
+    reactivated = False
+    if user:
+        reactivated = _reactivate_if_soft_deleted(
+            user,
+            email_from_provider=info.get("email"),
+            full_name_from_provider=info.get("full_name"),
+            db=db,
+        )
+
     created = False
     if not user:
-        # F20: derive a unique username (no longer 500s on collision).
-        base = info["email"].split("@")[0] if info.get("email") else f"google_{info['provider_id'][:8]}"
-        username = _unique_username(db, base)
         user = User(
             public_id=generate_public_id(),
-            username=username,
             email=info["email"],
             full_name=info.get("full_name"),
             auth_provider="google",
@@ -221,11 +261,24 @@ async def google_auth(body: SocialAuthRequest, request: Request, db: Session = D
         db.refresh(user)
         created = True
 
-    _record_login(db, request, user_id=user.id, username_attempted=user.username,
-                  provider="google", event_type="register" if created else "login",
+    if not user.is_active:
+        # Edge case: matched a soft-deleted user but reactivation refused to
+        # restore (e.g. their email was claimed by another account). Treat as
+        # a deactivated account so the client surfaces a clear error.
+        _record_login(db, request, user_id=user.id, email_attempted=user.email,
+                      provider="google", event_type="login", success=False,
+                      error_message="account_deactivated")
+        raise HTTPException(403, "Account is deactivated")
+
+    _record_login(db, request, user_id=user.id, email_attempted=user.email,
+                  provider="google",
+                  event_type="register" if (created or reactivated) else "login",
                   success=True)
-    token = create_access_token(user.id, user.username, user.role)
-    return {"access_token": token, "token_type": "bearer"}
+    return {
+        "access_token": create_access_token(user.id, user.role),
+        "refresh_token": create_refresh_token(user.id),
+        "token_type": "bearer",
+    }
 
 
 @router.post("/apple", response_model=TokenResponse)
@@ -233,11 +286,14 @@ async def google_auth(body: SocialAuthRequest, request: Request, db: Session = D
 async def apple_auth(body: SocialAuthRequest, request: Request, db: Session = Depends(get_db)):
     info = await verify_apple_token(body.token, nonce=body.nonce)
     if not info:
-        _record_login(db, request, user_id=None, username_attempted=None,
+        _record_login(db, request, user_id=None, email_attempted=None,
                       provider="apple", event_type="login", success=False,
                       error_message="invalid_apple_token")
         raise HTTPException(401, "Invalid Apple token")
 
+    # Match by provider_id WITHOUT is_active filter so we can reactivate a
+    # soft-deleted Apple account (the common case Apple users hit when our
+    # provider-side revoke wasn't configured — Apple still remembers them).
     user = db.query(User).filter(
         User.provider_id == info["provider_id"], User.auth_provider == "apple"
     ).first()
@@ -250,13 +306,8 @@ async def apple_auth(body: SocialAuthRequest, request: Request, db: Session = De
             # takeover concern (attacker creating a social account with a victim's
             # email) doesn't apply, since admin emails are operator-set, not user-set.
             if existing.auth_provider == "local":
-                # Admin accounts are the operator/owner and bootstrap the deployment.
-                # The F21 concern (attacker registering social with victim's email)
-                # doesn't apply because admin emails are operator-set, not user-set.
-                # So we auto-link admins, but still block silent linking for regular
-                # local users.
                 if existing.role != "admin":
-                    _record_login(db, request, user_id=existing.id, username_attempted=existing.username,
+                    _record_login(db, request, user_id=existing.id, email_attempted=existing.email,
                                   provider="apple", event_type="login", success=False,
                                   error_message="account_exists_local")
                     raise HTTPException(
@@ -274,17 +325,19 @@ async def apple_auth(body: SocialAuthRequest, request: Request, db: Session = De
                 db.refresh(existing)
             user = existing
 
+    reactivated = False
+    if user:
+        reactivated = _reactivate_if_soft_deleted(
+            user,
+            email_from_provider=info.get("email"),
+            full_name_from_provider=info.get("full_name"),
+            db=db,
+        )
+
     created = False
     if not user:
-        # F20: collision-safe username derivation.
-        if info.get("email"):
-            base = info["email"].split("@")[0]
-        else:
-            base = f"apple_{info['provider_id'][:8]}"
-        username = _unique_username(db, base)
         user = User(
             public_id=generate_public_id(),
-            username=username,
             email=info.get("email"),
             full_name=info.get("full_name"),
             auth_provider="apple",
@@ -295,11 +348,31 @@ async def apple_auth(body: SocialAuthRequest, request: Request, db: Session = De
         db.refresh(user)
         created = True
 
-    _record_login(db, request, user_id=user.id, username_attempted=user.username,
-                  provider="apple", event_type="register" if created else "login",
+    if not user.is_active:
+        _record_login(db, request, user_id=user.id, email_attempted=user.email,
+                      provider="apple", event_type="login", success=False,
+                      error_message="account_deactivated")
+        raise HTTPException(403, "Account is deactivated")
+
+    # Apple-specific: if the client sent the authorization_code, exchange it
+    # server-side for a refresh_token and stash it. Required for /auth/revoke
+    # at account-deletion time. Only worth doing on a freshly-created or
+    # reactivated row, or if we don't already have a refresh token cached.
+    if body.authorization_code and not user.apple_refresh_token:
+        tokens = await social_revoke.exchange_apple_code(body.authorization_code)
+        if tokens and tokens.get("refresh_token"):
+            user.apple_refresh_token = tokens["refresh_token"][:512]
+            db.commit()
+
+    _record_login(db, request, user_id=user.id, email_attempted=user.email,
+                  provider="apple",
+                  event_type="register" if (created or reactivated) else "login",
                   success=True)
-    token = create_access_token(user.id, user.username, user.role)
-    return {"access_token": token, "token_type": "bearer"}
+    return {
+        "access_token": create_access_token(user.id, user.role),
+        "refresh_token": create_refresh_token(user.id),
+        "token_type": "bearer",
+    }
 
 
 @router.post("/forgot-password")
@@ -373,9 +446,34 @@ async def reset_password(
 
 @router.post("/refresh", response_model=TokenResponse)
 @limiter.limit("30/minute")
-async def refresh_token(request: Request, user: User = Depends(get_current_user)):
-    token = create_access_token(user.id, user.username, user.role)
-    return {"access_token": token, "token_type": "bearer"}
+async def refresh_token(
+    body: RefreshTokenRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Exchange a long-lived refresh token for a fresh access token.
+
+    Pre-fix bug: this endpoint required the (often-expired) access token via
+    ``Depends(get_current_user)`` and ignored the refresh_token in the body,
+    so refresh always failed once the access token expired — effectively
+    logging users out every TOKEN_EXPIRE_MINUTES.
+    """
+    user_id = decode_refresh_token(body.refresh_token)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(401, "User not found or inactive")
+    # We re-issue a fresh refresh token on every call so an active user's
+    # session keeps rolling indefinitely. The old refresh token still works
+    # until it expires (no server-side blocklist).
+    _record_login(
+        db, request, user_id=user.id, email_attempted=user.email,
+        provider=user.auth_provider or "local", event_type="refresh", success=True,
+    )
+    return {
+        "access_token": create_access_token(user.id, user.role),
+        "refresh_token": create_refresh_token(user.id),
+        "token_type": "bearer",
+    }
 
 
 @router.post("/logout", response_model=LogoutResponse)

@@ -182,7 +182,6 @@ async def list_users(
     q = db.query(User)
     if search:
         q = q.filter(
-            (User.username.ilike(f"%{search}%")) |
             (User.email.ilike(f"%{search}%")) |
             (User.full_name.ilike(f"%{search}%"))
         )
@@ -212,7 +211,7 @@ async def list_users(
         plan_name = plans.get(sub.plan_id).name if sub and plans.get(sub.plan_id) else "free"
         active_count, last_at = session_stats.get(u.id, (0, None))
         items.append(UserListItem(
-            id=u.id, public_id=u.public_id, username=u.username, email=u.email, full_name=u.full_name,
+            id=u.id, public_id=u.public_id, email=u.email, full_name=u.full_name,
             role=u.role, is_active=u.is_active, auth_provider=u.auth_provider,
             plan_name=plan_name,
             active_sessions=active_count,
@@ -322,7 +321,7 @@ async def get_user(
     active_sessions, _ = _count_active_sessions(db, user)
 
     return UserDetailResponse(
-        id=user.id, public_id=user.public_id, username=user.username, email=user.email,
+        id=user.id, public_id=user.public_id, email=user.email,
         full_name=user.full_name, role=user.role, is_active=user.is_active,
         auth_provider=user.auth_provider, survey_response=user.survey_response,
         created_at=user.created_at,
@@ -403,7 +402,7 @@ async def delete_user(
     _safe_audit(
         db, action="admin.user.delete", actor_user_id=admin.id,
         target_type="user", target_id=user.id,
-        metadata={"username": user.username},
+        metadata={"email": user.email},
     )
     return {"message": "User deactivated"}
 
@@ -582,7 +581,8 @@ async def list_requests(
         items.append(RequestListItem(
             id=r.id,
             user_public_id=user.public_id if user else None,
-            username=user.username if user else "unknown",
+            email=user.email if user else None,
+            full_name=user.full_name if user else None,
             api_key_id=r.api_key_id,
             api_key_name=api_key.name if api_key else None,
             filename=r.filename, duration_seconds=r.duration_seconds,
@@ -891,7 +891,6 @@ async def admin_plan_subscribers(
         items.append(PlanSubscriberItem(
             user_id=u.id,
             user_public_id=u.public_id,
-            username=u.username,
             full_name=u.full_name,
             email=u.email,
             plan_source=source,
@@ -948,7 +947,8 @@ async def admin_list_subscriptions(
             id=s.id,
             user_id=s.user_id,
             user_public_id=u.public_id if u else None,
-            username=u.username if u else "unknown",
+            email=u.email if u else None,
+            full_name=u.full_name if u else None,
             plan_id=s.plan_id,
             plan_name=plan_name,
             plan_source=source,
@@ -1004,7 +1004,8 @@ async def admin_list_tickets(
         items.append(AdminTicketSummary(
             public_id=t.public_id,
             user_public_id=u.public_id if u else None,
-            username=u.username if u else None,
+            user_email=u.email if u else None,
+            user_full_name=u.full_name if u else None,
             ticket_type=t.ticket_type,
             subject=t.subject,
             status=t.status,
@@ -1040,7 +1041,7 @@ async def admin_get_ticket(
         u = users.get(uid)
         if not u:
             return None
-        return u.full_name or u.username
+        return u.full_name or u.email
 
     # Load attachments + group by reply (mirrors /support/tickets/{id} logic).
     from app.db.models import TicketAttachment as _TA
@@ -1076,7 +1077,8 @@ async def admin_get_ticket(
     return TicketDetail(
         public_id=t.public_id,
         user_public_id=owner.public_id if owner else None,
-        username=owner.username if owner else None,
+        user_email=owner.email if owner else None,
+        user_full_name=owner.full_name if owner else None,
         ticket_type=t.ticket_type,
         subject=t.subject,
         message=t.message,
@@ -1147,7 +1149,7 @@ async def admin_reply_ticket(
     return TicketReplyItem(
         public_id=reply.public_id,
         is_admin=True,
-        author_name=admin.full_name or admin.username,
+        author_name=admin.full_name or admin.email,
         message=reply.message,
         created_at=reply.created_at,
     )
@@ -1206,7 +1208,8 @@ async def admin_list_keys(
         q = q.filter(
             (ApiKey.name.ilike(like)) |
             (ApiKey.key_prefix.ilike(like)) |
-            (User.username.ilike(like))
+            (User.email.ilike(like)) |
+            (User.full_name.ilike(like))
         )
 
     total = q.count()
@@ -1227,7 +1230,8 @@ async def admin_list_keys(
             usage_today=_usage_today_for_key(db, api_key.id),
             daily_limit=_daily_limit_for_key(db, api_key),
             user_id=api_key.user_id,
-            username=user.username,
+            user_email=user.email,
+            user_full_name=user.full_name,
         ))
 
     return AdminApiKeyListResponse(keys=items, total=total, page=page, per_page=per_page)

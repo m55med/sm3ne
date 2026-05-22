@@ -51,7 +51,8 @@ class TicketSummary(BaseModel):
 class TicketDetail(BaseModel):
     public_id: Optional[str] = None
     user_public_id: Optional[str] = None
-    username: Optional[str] = None
+    user_email: Optional[str] = None
+    user_full_name: Optional[str] = None
     ticket_type: TicketType
     subject: str
     message: str
@@ -71,7 +72,8 @@ class TicketListResponse(BaseModel):
 
 class AdminTicketSummary(TicketSummary):
     user_public_id: Optional[str] = None
-    username: Optional[str] = None
+    user_email: Optional[str] = None
+    user_full_name: Optional[str] = None
 
 
 class AdminTicketListResponse(BaseModel):
