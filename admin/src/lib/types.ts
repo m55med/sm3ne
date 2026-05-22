@@ -424,3 +424,50 @@ export interface AnalyzeAudioResponse {
   top_words: AnalyzeWordCount[];
   segments: AnalyzeSegment[];
 }
+
+// --- Devices + push notifications --------------------------------------------
+
+export interface DeviceItem {
+  public_id: string;
+  user_id: number;
+  user_email: string | null;
+  user_full_name: string | null;
+  platform: "android" | "ios";
+  device_model: string | null;
+  device_marketing_name: string | null;
+  device_os: string | null;
+  device_os_version: string | null;
+  device_locale: string | null;
+  app_version: string | null;
+  push_enabled: boolean;
+  last_seen_at: string | null;
+  created_at: string | null;
+}
+
+export interface DeviceListResponse {
+  devices: DeviceItem[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export type NotificationTarget =
+  | "all"
+  | "users"
+  | "devices"
+  | "hearing_impaired";
+
+export interface NotificationSendRequest {
+  title: string;
+  body: string;
+  target: NotificationTarget;
+  user_ids?: number[];
+  device_public_ids?: string[];
+  deep_link?: string;
+}
+
+export interface NotificationSendResponse {
+  sent: number;
+  failed: number;
+  skipped_no_token: number;
+}

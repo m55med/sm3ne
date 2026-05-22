@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 from app.auth.api_key import generate_api_key
 from app.core.config import TOKEN_EXPIRE_MINUTES
 from app.db.database import get_db
-from app.db.models import ApiKey, AppSetting, Coupon, LoginEvent, Plan, SupportTicket, TicketReply, TranscriptionRequest, User, UserSubscription
+from app.db.models import ApiKey, AppSetting, Coupon, Device, LoginEvent, Plan, SupportTicket, TicketReply, TranscriptionRequest, User, UserSubscription
 from app.auth.jwt import get_current_admin
 from app.schemas.admin import (
     AdminStatsResponse, UserListResponse, UserListItem, UserUpdateRequest,
@@ -1734,3 +1734,147 @@ async def analyze_audio(
             for s in base["segments"]
         ],
     )
+
+
+# --- Devices + push-notification fan-out -------------------------------------
+
+from app.schemas.devices import (  # noqa: E402  — local-only routes file
+    DeviceItem, DeviceListResponse,
+    NotificationSendRequest, NotificationSendResponse,
+)
+from app.services import notification_service as _notif_service  # noqa: E402
+
+
+def _device_to_item(d: Device, u: Optional[User]) -> DeviceItem:
+    return DeviceItem(
+        public_id=d.public_id,
+        user_id=d.user_id,
+        user_email=u.email if u else None,
+        user_full_name=u.full_name if u else None,
+        platform=d.platform,
+        device_model=d.device_model,
+        device_marketing_name=d.device_marketing_name,
+        device_os=d.device_os,
+        device_os_version=d.device_os_version,
+        device_locale=d.device_locale,
+        app_version=d.app_version,
+        push_enabled=d.push_enabled,
+        last_seen_at=d.last_seen_at,
+        created_at=d.created_at,
+    )
+
+
+@router.get("/devices", response_model=DeviceListResponse)
+async def admin_list_devices(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+    platform: Optional[str] = Query(None, pattern="^(android|ios)$"),
+    push_enabled: Optional[bool] = None,
+    user_id: Optional[int] = None,
+    search: Optional[str] = Query(None, max_length=120),
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """All registered devices, joined with their user for display purposes."""
+    q = db.query(Device, User).join(User, User.id == Device.user_id)
+    if platform:
+        q = q.filter(Device.platform == platform)
+    if push_enabled is not None:
+        q = q.filter(Device.push_enabled == push_enabled)
+    if user_id is not None:
+        q = q.filter(Device.user_id == user_id)
+    if search:
+        like = f"%{search}%"
+        q = q.filter(
+            (User.email.ilike(like))
+            | (User.full_name.ilike(like))
+            | (Device.device_marketing_name.ilike(like))
+            | (Device.device_model.ilike(like))
+        )
+    total = q.count()
+    rows = (
+        q.order_by(Device.last_seen_at.desc().nullslast())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+    items = [_device_to_item(d, u) for d, u in rows]
+    return DeviceListResponse(devices=items, total=total, page=page, per_page=per_page)
+
+
+@router.get("/users/{user_ref}/devices", response_model=list[DeviceItem])
+async def admin_user_devices(
+    user_ref: str,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Per-user device list — surfaced on /users/[id] for the founder's
+    "what device is this person on?" workflow."""
+    user = _resolve_user(db, user_ref)
+    rows = (
+        db.query(Device)
+        .filter(Device.user_id == user.id)
+        .order_by(Device.last_seen_at.desc().nullslast())
+        .all()
+    )
+    return [_device_to_item(d, user) for d in rows]
+
+
+@router.post("/notifications/send", response_model=NotificationSendResponse)
+async def admin_send_notification(
+    body: NotificationSendRequest,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Fan a push notification out to a target slice (everyone, specific
+    users, specific devices, or just hearing-impaired survey responders).
+
+    No-ops if Firebase Admin isn't configured (logged as a warning) so
+    pre-credential testing of the admin UI still works without crashing.
+    """
+    # Resolve the target set into a list of FCM tokens.
+    q = db.query(Device).filter(Device.push_enabled == True)  # noqa: E712
+    if body.target == "users":
+        if not body.user_ids:
+            raise HTTPException(400, "target=users requires user_ids")
+        q = q.filter(Device.user_id.in_(body.user_ids))
+    elif body.target == "devices":
+        if not body.device_public_ids:
+            raise HTTPException(400, "target=devices requires device_public_ids")
+        q = q.filter(Device.public_id.in_(body.device_public_ids))
+    elif body.target == "hearing_impaired":
+        # Match users whose survey reasons include the deaf marker. SQL JSON
+        # match would be cleaner but the column is plain TEXT, so a LIKE on
+        # the serialised JSON gets us there with no migration.
+        q = q.join(User, User.id == Device.user_id).filter(
+            User.survey_response.ilike("%hearing_impaired%"),
+        )
+    elif body.target != "all":
+        raise HTTPException(400, "Unknown target")
+
+    devices = q.all()
+    tokens = [d.fcm_token for d in devices if d.fcm_token]
+    skipped = sum(1 for d in devices if not d.fcm_token)
+
+    if not tokens:
+        return NotificationSendResponse(sent=0, failed=0, skipped_no_token=skipped)
+
+    data: dict[str, str] = {}
+    if body.deep_link:
+        data["deep_link"] = body.deep_link
+
+    sent, failed = await _notif_service.send_to_tokens(
+        tokens, title=body.title, body=body.body, data=data,
+    )
+    _safe_audit(
+        db, actor_id=admin.id, action="admin.notification.send",
+        target_type="broadcast", target_id=None,
+        metadata={
+            "target": body.target,
+            "tokens": len(tokens),
+            "sent": sent,
+            "failed": failed,
+            "title": body.title[:80],
+        },
+    )
+    return NotificationSendResponse(sent=sent, failed=failed, skipped_no_token=skipped)

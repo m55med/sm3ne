@@ -419,3 +419,37 @@ class AuditLog(Base):
     metadata_json = Column("metadata", Text, nullable=True)
     ip_address = Column(String(64), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class Device(Base):
+    """A physical device (Android / iOS) that has signed into the app.
+
+    Multiple devices per user is the norm (phone + tablet, dev phone + real
+    phone, replaced phone but old still receives, etc.) so the unique key is
+    ``fcm_token`` — one row per app install. We update ``last_seen_at`` on
+    each app launch so admin can spot stale rows and skip them when fanning
+    out a broadcast.
+    """
+    __tablename__ = "devices"
+    __table_args__ = (
+        Index("idx_devices_user_seen", "user_id", "last_seen_at"),
+        Index("idx_devices_platform_enabled", "platform", "push_enabled"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    public_id = Column(String(12), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    # FCM registration token. Unique per install. Rotates on app re-install or
+    # explicit revoke — we upsert by this value.
+    fcm_token = Column(String(512), unique=True, nullable=False, index=True)
+    platform = Column(String(16), nullable=False)  # "android" | "ios"
+    device_model = Column(String(128), nullable=True)         # iPhone15,3
+    device_marketing_name = Column(String(128), nullable=True)  # "iPhone 15 Pro"
+    device_os = Column(String(32), nullable=True)              # iOS / Android
+    device_os_version = Column(String(64), nullable=True)      # 17.4.1
+    device_locale = Column(String(16), nullable=True)          # ar-EG
+    app_version = Column(String(32), nullable=True)            # 1.0.0+21
+    push_enabled = Column(Boolean, default=True)
+    last_seen_at = Column(DateTime(timezone=True), default=utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

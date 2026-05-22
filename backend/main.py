@@ -8,6 +8,7 @@ from app.core.lifespan import lifespan
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.routes.api_keys import router as api_keys_router
 from app.routes.auth import router as auth_router
+from app.routes.devices import router as devices_router
 from app.routes.transcribe import router as transcribe_router
 from app.routes.profile import router as profile_router
 from app.routes.plans import router as plans_router
@@ -49,6 +50,7 @@ app.include_router(auth_router, prefix=API_PREFIX)
 app.include_router(profile_router, prefix=API_PREFIX)
 app.include_router(plans_router, prefix=API_PREFIX)
 app.include_router(api_keys_router, prefix=API_PREFIX)
+app.include_router(devices_router, prefix=API_PREFIX)
 app.include_router(transcribe_router, prefix=API_PREFIX)
 app.include_router(support_router, prefix=API_PREFIX)
 app.include_router(admin_router, prefix=API_PREFIX)

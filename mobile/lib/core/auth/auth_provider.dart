@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:bisawtak/core/api/api_client.dart';
 import 'package:bisawtak/core/auth/token_storage.dart';
+import 'package:bisawtak/core/notifications/notification_service.dart';
 import 'package:bisawtak/data/local/transcription_dao.dart';
 import 'package:bisawtak/data/models/user.dart';
 
@@ -28,8 +31,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
   final ApiClient _api;
   final TokenStorage _tokenStorage;
   final TranscriptionDao _transcriptionDao;
+  // Used to reach the NotificationService for push-token registration on
+  // login + deregistration on logout. Passed via the provider below.
+  final Ref _ref;
 
-  AuthNotifier(this._api, this._tokenStorage, {TranscriptionDao? dao})
+  AuthNotifier(this._ref, this._api, this._tokenStorage, {TranscriptionDao? dao})
       : _transcriptionDao = dao ?? TranscriptionDao(),
         super(const AuthState());
 
@@ -43,6 +49,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final resp = await _api.dio.get('/profile');
       final user = User.fromJson(resp.data);
       state = state.copyWith(status: AuthStatus.authenticated, user: user);
+      // Fire-and-forget: ask for push permission + register this device's
+      // FCM token with the server. Idempotent, safe on every auth check.
+      unawaited(_ref.read(notificationServiceProvider).registerIfAuthenticated());
     } catch (_) {
       await _tokenStorage.clearAll();
       state = state.copyWith(status: AuthStatus.unauthenticated);
@@ -132,6 +141,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// 3. Clears the local cached transcriptions so the next user doesn't see them.
   /// 4. Marks state as unauthenticated.
   Future<void> logout() async {
+    // Deregister the FCM token first while we're still authenticated —
+    // running it after _clearLocalAuthState would have no token to attach.
+    try {
+      await _ref.read(notificationServiceProvider).deregister();
+    } catch (_) {/* best effort */}
     try {
       await _api.dio.post('/auth/logout');
     } catch (_) {
@@ -175,6 +189,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   final notifier = AuthNotifier(
+    ref,
     ref.read(apiClientProvider),
     ref.read(tokenStorageProvider),
   );

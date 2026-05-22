@@ -28,6 +28,7 @@ import {
 } from "@/lib/labels";
 import { formatDateTime, formatNumber } from "@/lib/format";
 import { Textarea } from "@/components/ui/textarea";
+import { UserDevicesSection } from "@/components/user-devices-section";
 import type { UserDetail, SessionItem, PlanAdminItem, TelegramUserItem } from "@/lib/types";
 
 const PLATFORM_ICON: Record<string, string> = {
@@ -406,6 +407,9 @@ export default function UserDetailPage() {
 
       {/* تيليجرام — مربوط أو غير مربوط */}
       <TelegramSection userId={user.id} />
+
+      {/* الأجهزة المسجّلة للإشعارات */}
+      <UserDevicesSection userRef={user.id} />
 
       {/* الجلسات */}
       <Card id="sessions" className="p-6">

@@ -55,6 +55,28 @@ def _run_idempotent_ddl(db):
         # /auth/revoke when they delete their account. Stored encrypted at
         # rest only on the postgres volume — never returned over API.
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_refresh_token VARCHAR(512)",
+        # devices table — one row per FCM-registered app install. Powers the
+        # admin's "send push" page + the per-user device list. Cascade-delete
+        # when the user row goes (account deletion cleans up).
+        """CREATE TABLE IF NOT EXISTS devices (
+            id SERIAL PRIMARY KEY,
+            public_id VARCHAR(12) UNIQUE NOT NULL,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            fcm_token VARCHAR(512) UNIQUE NOT NULL,
+            platform VARCHAR(16) NOT NULL,
+            device_model VARCHAR(128),
+            device_marketing_name VARCHAR(128),
+            device_os VARCHAR(32),
+            device_os_version VARCHAR(64),
+            device_locale VARCHAR(16),
+            app_version VARCHAR(32),
+            push_enabled BOOLEAN DEFAULT TRUE,
+            last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_devices_user_seen ON devices(user_id, last_seen_at)",
+        "CREATE INDEX IF NOT EXISTS idx_devices_platform_enabled ON devices(platform, push_enabled)",
         # login_events.username_attempted → email_attempted (failed-login audit
         # now records the email the user typed). Idempotent: only runs if the
         # old column still exists.

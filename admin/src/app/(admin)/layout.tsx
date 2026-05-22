@@ -14,6 +14,7 @@ const navItems = [
   { href: "/telegram", label: "تيليجرام", icon: "💬" },
   { href: "/requests", label: "الطلبات", icon: "📋" },
   { href: "/tickets", label: "الرسائل", icon: "📨" },
+  { href: "/devices", label: "الأجهزة والإشعارات", icon: "📱" },
   { href: "/subscriptions", label: "الاشتراكات", icon: "📜" },
   { href: "/coupons", label: "الكوبونات", icon: "🎟️" },
   { href: "/plans", label: "الباقات", icon: "💎" },
