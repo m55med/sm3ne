@@ -79,7 +79,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     ref.listen<AuthState>(authProvider, (_, state) {
       if (state.status == AuthStatus.authenticated) {
-        context.go('/home');
+        // Brand-new accounts (including first-time Google/Apple sign-ups
+        // that came in via THIS screen) haven't filled the onboarding
+        // survey yet — route them through it so we capture their reason
+        // for using the app. Returning users with a saved response (even
+        // an empty "skipped" marker) go straight to /home.
+        final destination = (state.user?.surveyResponse == null) ? '/survey' : '/home';
+        context.go(destination);
       }
       final err = state.error;
       if (err != null) {

@@ -23,6 +23,10 @@ class UserListItem(BaseModel):
     plan_name: Optional[str] = "free"
     active_sessions: int = 0
     last_session_at: Optional[datetime] = None
+    # JSON blob from the onboarding survey: {"reasons": [...], "other_text": "..."}.
+    # Surfaced in the admin list so the founder can see at a glance who has
+    # marked themselves as hearing-impaired (the app's core audience).
+    survey_response: Optional[str] = None
     created_at: datetime
 
 

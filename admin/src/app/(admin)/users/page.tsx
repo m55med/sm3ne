@@ -11,9 +11,23 @@ import { RefreshButton } from "@/components/refresh-button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { toast } from "@/components/toast";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { PLAN_LABEL } from "@/lib/labels";
+import { PLAN_LABEL, SURVEY_REASON_ICON, SURVEY_REASON_LABEL } from "@/lib/labels";
 import { formatDate, formatNumber } from "@/lib/format";
 import type { UserListItem, PaginatedResponse } from "@/lib/types";
+
+/// Pulls the `reasons` array out of the survey_response JSON without trusting
+/// it — returns an empty array on any parse / shape failure so the render
+/// path can't crash on bad data.
+function surveyReasons(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as { reasons?: unknown };
+    if (!Array.isArray(parsed.reasons)) return [];
+    return parsed.reasons.filter((x): x is string => typeof x === "string");
+  } catch {
+    return [];
+  }
+}
 
 const PER_PAGE = 20;
 
@@ -90,6 +104,7 @@ export default function UsersPage() {
                   <th className="text-right pb-3">#</th>
                   <th className="text-right pb-3">المستخدم</th>
                   <th className="text-right pb-3">الإيميل</th>
+                  <th className="text-right pb-3">سبب الاستخدام</th>
                   <th className="text-right pb-3">الباقة</th>
                   <th className="text-right pb-3">الجلسات</th>
                   <th className="text-right pb-3">الحالة</th>
@@ -108,6 +123,42 @@ export default function UsersPage() {
                       </Link>
                     </td>
                     <td className="py-3 text-gray-500">{u.email || "-"}</td>
+                    <td className="py-3">
+                      {(() => {
+                        const reasons = surveyReasons(u.survey_response);
+                        if (reasons.length === 0) {
+                          return <span className="text-gray-300 text-xs">—</span>;
+                        }
+                        const isHearing = reasons.includes("hearing_impaired");
+                        return (
+                          <div className="flex flex-wrap gap-1">
+                            {reasons.slice(0, 3).map((r) => (
+                              <Badge
+                                key={r}
+                                variant={r === "hearing_impaired" ? "default" : "outline"}
+                                className={
+                                  r === "hearing_impaired"
+                                    ? "bg-rose-100 text-rose-700 border-rose-200"
+                                    : "text-xs"
+                                }
+                                title={SURVEY_REASON_LABEL[r] || r}
+                              >
+                                <span className="me-1">{SURVEY_REASON_ICON[r] || "•"}</span>
+                                {SURVEY_REASON_LABEL[r] || r}
+                              </Badge>
+                            ))}
+                            {reasons.length > 3 && (
+                              <span className="text-xs text-gray-400 self-center">
+                                +{reasons.length - 3}
+                              </span>
+                            )}
+                            {isHearing && (
+                              <span className="sr-only">ضعف سمع</span>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td className="py-3">
                       <Badge variant={u.plan_name === "free" ? "secondary" : "default"}>
                         {PLAN_LABEL[u.plan_name || "free"] || u.plan_name}
@@ -141,7 +192,7 @@ export default function UsersPage() {
                   </tr>
                 ))}
                 {users.length === 0 && (
-                  <tr><td colSpan={9} className="py-8 text-center text-gray-400">لا توجد نتائج</td></tr>
+                  <tr><td colSpan={10} className="py-8 text-center text-gray-400">لا توجد نتائج</td></tr>
                 )}
               </tbody>
             </table>

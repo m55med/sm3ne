@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +10,11 @@ import 'package:intl/intl.dart';
 import 'package:bisawtak/core/api/api_client.dart';
 import 'package:bisawtak/data/repositories/support_repository.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
+
+// Mirrors the new-ticket sheet so the UX is consistent. Server enforces same.
+const _kReplyMaxAttachmentBytes = 5 * 1024 * 1024;
+const _kReplyMaxAttachments = 5;
+const _kReplyAllowedExts = ['jpg', 'jpeg', 'png', 'webp', 'heic'];
 
 class TicketDetailScreen extends ConsumerStatefulWidget {
   final String publicId;
@@ -23,6 +30,7 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
   String? _error;
   final _replyCtrl = TextEditingController();
   bool _sending = false;
+  final List<File> _replyAttachments = [];
 
   @override
   void initState() {
@@ -59,15 +67,44 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
   Future<void> _sendReply() async {
     if (_sending) return;
     final text = _replyCtrl.text.trim();
-    if (text.isEmpty) return;
+    // Allow attachment-only replies — image is the whole message, no text needed.
+    if (text.isEmpty && _replyAttachments.isEmpty) return;
     setState(() => _sending = true);
     try {
-      await ref.read(apiClientProvider).dio.post(
+      // Reply must be created BEFORE attachments so we can tie each upload to
+      // the right reply (back end resolves `reply_public_id` to internal id).
+      final resp = await ref.read(apiClientProvider).dio.post(
         '/support/tickets/${widget.publicId}/replies',
-        data: {'message': text},
+        // The reply field is required by the backend — fall back to a single
+        // space when the user only attaches images. The bubble still renders.
+        data: {'message': text.isEmpty ? ' ' : text},
       );
+      final replyPublicId = resp.data is Map ? resp.data['public_id'] as String? : null;
+
+      int failed = 0;
+      if (_replyAttachments.isNotEmpty) {
+        final repo = ref.read(supportRepositoryProvider);
+        for (final f in _replyAttachments) {
+          try {
+            await repo.uploadAttachment(
+              publicId: widget.publicId,
+              filePath: f.path,
+              replyPublicId: replyPublicId,
+            );
+          } catch (_) {
+            failed++;
+          }
+        }
+      }
+
       _replyCtrl.clear();
+      _replyAttachments.clear();
       await _load();
+      if (failed > 0 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تم إرسال الرد لكن فشل رفع $failed صورة')),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -79,6 +116,50 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
       }
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _pickReplyImages() async {
+    if (_sending) return;
+    if (_replyAttachments.length >= _kReplyMaxAttachments) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('الحد الأقصى $_kReplyMaxAttachments صور')),
+      );
+      return;
+    }
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: _kReplyAllowedExts,
+        allowMultiple: true,
+        withData: false,
+      );
+      if (result == null) return;
+      final added = <File>[];
+      for (final f in result.files) {
+        if (f.path == null) continue;
+        final file = File(f.path!);
+        final size = await file.length();
+        if (size > _kReplyMaxAttachmentBytes) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('الصورة "${f.name}" أكبر من 5 ميجا')),
+            );
+          }
+          continue;
+        }
+        added.add(file);
+        if (_replyAttachments.length + added.length >= _kReplyMaxAttachments) break;
+      }
+      if (added.isNotEmpty) {
+        setState(() => _replyAttachments.addAll(added));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendlyErrorMessage(e))),
+        );
+      }
     }
   }
 
@@ -159,25 +240,90 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
                 boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 8, offset: const Offset(0, -2))],
               ),
               padding: const EdgeInsets.all(8),
-              child: Row(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _replyCtrl,
-                      minLines: 1,
-                      maxLines: 4,
-                      decoration: const InputDecoration(
-                        hintText: 'اكتب ردك...',
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  // Selected-but-not-yet-uploaded thumbnails. We show them
+                  // above the input so it's obvious tapping "send" will
+                  // include them. Tapping ✕ on a thumb removes it.
+                  if (_replyAttachments.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                      child: SizedBox(
+                        height: 64,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _replyAttachments.length,
+                          separatorBuilder: (_, _) => const SizedBox(width: 6),
+                          itemBuilder: (_, i) {
+                            final file = _replyAttachments[i];
+                            return SizedBox(
+                              width: 64,
+                              height: 64,
+                              child: Stack(
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Image.file(
+                                      file,
+                                      width: 64,
+                                      height: 64,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                  Positioned(
+                                    top: 2,
+                                    right: 2,
+                                    child: Material(
+                                      color: Colors.black54,
+                                      shape: const CircleBorder(),
+                                      child: InkWell(
+                                        customBorder: const CircleBorder(),
+                                        onTap: _sending
+                                            ? null
+                                            : () => setState(() => _replyAttachments.removeAt(i)),
+                                        child: const Padding(
+                                          padding: EdgeInsets.all(2),
+                                          child: Icon(Icons.close, size: 12, color: Colors.white),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ),
-                  ),
-                  IconButton.filled(
-                    onPressed: _sending ? null : _sendReply,
-                    icon: _sending
-                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Icon(Icons.send),
+                  Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'إرفاق صورة',
+                        onPressed: _sending || _replyAttachments.length >= _kReplyMaxAttachments
+                            ? null
+                            : _pickReplyImages,
+                        icon: const Icon(Icons.add_photo_alternate_outlined),
+                      ),
+                      Expanded(
+                        child: TextField(
+                          controller: _replyCtrl,
+                          minLines: 1,
+                          maxLines: 4,
+                          decoration: const InputDecoration(
+                            hintText: 'اكتب ردك...',
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          ),
+                        ),
+                      ),
+                      IconButton.filled(
+                        onPressed: _sending ? null : _sendReply,
+                        icon: _sending
+                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Icon(Icons.send),
+                      ),
+                    ],
                   ),
                 ],
               ),

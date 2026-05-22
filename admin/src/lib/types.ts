@@ -18,6 +18,9 @@ export interface UserListItem {
   plan_name: string | null;
   active_sessions: number;
   last_session_at: string | null;
+  // JSON blob like `{"reasons": ["hearing_impaired"], "other_text": "..."}` —
+  // see SURVEY_REASON_LABEL in lib/labels.ts for the AR display names.
+  survey_response: string | null;
   created_at: string;
 }
 

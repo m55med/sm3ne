@@ -60,6 +60,25 @@ class _SurveyScreenState extends ConsumerState<SurveyScreen> {
     }
   }
 
+  /// Sends an empty survey so the user.survey_response field gets populated
+  /// (with `{"reasons":[]}`) — that's how login_screen knows this user has
+  /// already been shown the survey and shouldn't be re-prompted on next
+  /// sign-in. We tolerate network failures here: worst case the user sees
+  /// the survey one more time on their next login.
+  Future<void> _skip() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      await ref.read(apiClientProvider).dio.post('/profile/survey', data: {
+        'reasons': <String>[],
+      });
+      await ref.read(authProvider.notifier).checkAuth();
+    } catch (_) {
+      // Best-effort — silently move on so the user can keep using the app.
+    }
+    if (mounted) context.go('/home');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -71,7 +90,10 @@ class _SurveyScreenState extends ConsumerState<SurveyScreen> {
             children: [
               Align(
                 alignment: AlignmentDirectional.topEnd,
-                child: TextButton(onPressed: () => context.go('/home'), child: const Text('تخطي')),
+                child: TextButton(
+                  onPressed: _saving ? null : _skip,
+                  child: const Text('تخطي'),
+                ),
               ),
               const SizedBox(height: 16),
               Text(

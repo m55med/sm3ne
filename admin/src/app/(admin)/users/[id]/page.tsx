@@ -20,7 +20,12 @@ import {
 } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { toast } from "@/components/toast";
-import { PLAN_LABEL, SUBSCRIPTION_SOURCE_LABEL } from "@/lib/labels";
+import {
+  PLAN_LABEL,
+  SUBSCRIPTION_SOURCE_LABEL,
+  SURVEY_REASON_ICON,
+  SURVEY_REASON_LABEL,
+} from "@/lib/labels";
 import { formatDateTime, formatNumber } from "@/lib/format";
 import { Textarea } from "@/components/ui/textarea";
 import type { UserDetail, SessionItem, PlanAdminItem, TelegramUserItem } from "@/lib/types";
@@ -302,12 +307,58 @@ export default function UserDetailPage() {
             <Row label="إجمالي الطلبات" value={<span className="font-bold text-lg">{formatNumber(user.total_requests)}</span>} />
           </div>
 
-          {user.survey_response && (
-            <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-              <h3 className="text-sm font-bold text-gray-700 mb-2">الاستبيان</h3>
-              <pre className="text-xs text-gray-600 whitespace-pre-wrap break-words">{user.survey_response}</pre>
-            </div>
-          )}
+          {user.survey_response && (() => {
+            // Show the onboarding survey response as readable badges + the
+            // optional free-text "other" field. Falls back to the raw JSON
+            // string if the shape is unexpected so we don't lose data on a
+            // schema change.
+            let parsed: { reasons?: unknown; other_text?: unknown } | null = null;
+            try {
+              parsed = JSON.parse(user.survey_response) as typeof parsed;
+            } catch {
+              parsed = null;
+            }
+            const reasons = Array.isArray(parsed?.reasons)
+              ? (parsed!.reasons as unknown[]).filter((x): x is string => typeof x === "string")
+              : [];
+            const otherText = typeof parsed?.other_text === "string"
+              ? (parsed!.other_text as string).trim()
+              : "";
+            return (
+              <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                <h3 className="text-sm font-bold text-gray-700 mb-2">سبب استخدام التطبيق</h3>
+                {reasons.length === 0 && !otherText && (
+                  <p className="text-xs text-gray-500">
+                    تمّ تخطّي الاستبيان (لم يحدّد المستخدم سبباً).
+                  </p>
+                )}
+                {reasons.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {reasons.map((r) => (
+                      <Badge
+                        key={r}
+                        variant={r === "hearing_impaired" ? "default" : "outline"}
+                        className={
+                          r === "hearing_impaired"
+                            ? "bg-rose-100 text-rose-700 border-rose-200"
+                            : ""
+                        }
+                      >
+                        <span className="me-1">{SURVEY_REASON_ICON[r] || "•"}</span>
+                        {SURVEY_REASON_LABEL[r] || r}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+                {otherText && (
+                  <p className="mt-3 text-sm text-gray-700 whitespace-pre-wrap">
+                    <span className="font-semibold text-gray-600">سبب آخر: </span>
+                    {otherText}
+                  </p>
+                )}
+              </div>
+            );
+          })()}
         </Card>
 
         {/* الاشتراك */}

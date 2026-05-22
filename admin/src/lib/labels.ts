@@ -34,3 +34,25 @@ export const SOURCE_LABEL: Record<string, string> = {
   share: "مشاركة",
   api: "API",
 };
+
+// أسباب الاستخدام من استبيان الـ onboarding — نفس مفاتيح الموبايل في
+// `mobile/lib/features/survey/survey_screen.dart`. هنا للـ rendering في
+// `/users` page وكروت تفاصيل المستخدم.
+export const SURVEY_REASON_LABEL: Record<string, string> = {
+  hearing_impaired: "ضعف سمع",
+  voice_messages: "رسائل صوتية",
+  lectures: "محاضرات",
+  meetings: "اجتماعات",
+  accessibility: "إمكانية وصول",
+  other: "أخرى",
+};
+
+// تنسيق الأيقونة (emoji) لكل سبب — يستخدم في الـ list view حيث المساحة ضيقة.
+export const SURVEY_REASON_ICON: Record<string, string> = {
+  hearing_impaired: "🦻",
+  voice_messages: "💬",
+  lectures: "🎓",
+  meetings: "👥",
+  accessibility: "♿",
+  other: "❓",
+};

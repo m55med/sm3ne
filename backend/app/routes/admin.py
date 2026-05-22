@@ -216,6 +216,7 @@ async def list_users(
             plan_name=plan_name,
             active_sessions=active_count,
             last_session_at=last_at,
+            survey_response=u.survey_response,
             created_at=u.created_at,
         ))
 

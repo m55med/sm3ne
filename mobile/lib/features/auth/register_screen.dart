@@ -62,7 +62,11 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     final scheme = Theme.of(context).colorScheme;
     ref.listen<AuthState>(authProvider, (_, state) {
       if (state.status == AuthStatus.authenticated) {
-        context.go('/survey');
+        // Survey is the default destination from register (it's a NEW
+        // account), but if a social sign-in actually matched an existing
+        // user who already submitted, skip to /home so we don't re-prompt.
+        final destination = (state.user?.surveyResponse == null) ? '/survey' : '/home';
+        context.go(destination);
       }
       final err = state.error;
       if (err != null) {

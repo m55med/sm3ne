@@ -190,16 +190,28 @@ async def upload_attachment(
     public_id: str,
     request: Request,
     file: UploadFile = File(...),
+    reply_public_id: Optional[str] = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Attach an image to a ticket (or its latest reply by the user). Limit
-    is 10 uploads/hour to protect disk + the admin queue from spam."""
+    """Attach an image to a ticket. If ``reply_public_id`` is supplied, the
+    attachment is tied to that specific reply (so the UI groups it with the
+    bubble the user was looking at when they uploaded). Otherwise it hangs
+    off the ticket's original message. 10 uploads/hour to protect disk."""
     ticket = _load_ticket_for_user(db, public_id, user)
     if ticket.status == "closed":
         raise HTTPException(400, "Ticket is closed")
+    reply_id: Optional[int] = None
+    if reply_public_id:
+        reply_row = db.query(TicketReply).filter(
+            TicketReply.public_id == reply_public_id,
+            TicketReply.ticket_id == ticket.id,
+            TicketReply.user_id == user.id,  # the caller can only attach to their own replies
+        ).first()
+        if reply_row:
+            reply_id = reply_row.id
     attachment = await ticket_attachment_service.save_attachment(
-        db, upload=file, ticket_id=ticket.id, user_id=user.id, reply_id=None,
+        db, upload=file, ticket_id=ticket.id, user_id=user.id, reply_id=reply_id,
     )
     return _serialize_attachment(attachment)
 

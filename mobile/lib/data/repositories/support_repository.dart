@@ -132,6 +132,7 @@ class SupportRepository {
   Future<Map<String, dynamic>> uploadAttachment({
     required String publicId,
     required String filePath,
+    String? replyPublicId,
   }) async {
     try {
       final form = FormData.fromMap({
@@ -140,6 +141,9 @@ class SupportRepository {
       final resp = await _dio.post(
         '/support/tickets/$publicId/attachments',
         data: form,
+        queryParameters: {
+          if (replyPublicId != null) 'reply_public_id': replyPublicId,
+        },
         options: Options(
           // Image uploads can take a moment on slow connections.
           sendTimeout: const Duration(seconds: 60),
