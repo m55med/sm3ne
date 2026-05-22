@@ -312,17 +312,18 @@ export default function UserDetailPage() {
             // optional free-text "other" field. Falls back to the raw JSON
             // string if the shape is unexpected so we don't lose data on a
             // schema change.
-            let parsed: { reasons?: unknown; other_text?: unknown } | null = null;
+            type SurveyShape = { reasons?: unknown; other_text?: unknown };
+            let parsed: SurveyShape | null = null;
             try {
-              parsed = JSON.parse(user.survey_response) as typeof parsed;
+              parsed = JSON.parse(user.survey_response) as SurveyShape;
             } catch {
               parsed = null;
             }
-            const reasons = Array.isArray(parsed?.reasons)
-              ? (parsed!.reasons as unknown[]).filter((x): x is string => typeof x === "string")
+            const reasons = parsed && Array.isArray(parsed.reasons)
+              ? (parsed.reasons as unknown[]).filter((x): x is string => typeof x === "string")
               : [];
-            const otherText = typeof parsed?.other_text === "string"
-              ? (parsed!.other_text as string).trim()
+            const otherText = parsed && typeof parsed.other_text === "string"
+              ? parsed.other_text.trim()
               : "";
             return (
               <div className="mt-6 p-4 bg-gray-50 rounded-lg">
