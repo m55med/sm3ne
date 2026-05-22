@@ -13,6 +13,12 @@ services:
       # MUST be a named volume — anything written to /app/uploads is wiped
       # on every container recreate without this.
       - bisawtak-uploads:/app/uploads
+      # Server-side credential files (Firebase service-account, future Apple
+      # Sign-In .p8 etc). Bind-mounted read-only from the host so we can
+      # rotate keys without a rebuild. The host folder is gitignored — CI/CD
+      # never touches it. The path INSIDE the container is what env vars
+      # like FIREBASE_SERVICE_ACCOUNT_PATH point at.
+      - ./secrets:/app/secrets:ro
     depends_on:
       bisawtak-db:
         condition: service_healthy
