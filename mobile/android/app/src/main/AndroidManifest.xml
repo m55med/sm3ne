@@ -115,5 +115,12 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- speech_to_text needs to query the system RecognitionService since
+             Android 11+ package-visibility restrictions hide it otherwise.
+             Without this, SpeechRecognizer.isRecognitionAvailable returns false
+             on a phone that actually has Google's recognizer installed. -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
     </queries>
 </manifest>

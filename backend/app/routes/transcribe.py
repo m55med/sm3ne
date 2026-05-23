@@ -29,8 +29,10 @@ from app.auth.deps import check_daily_quota, check_rpm_limit, get_user_or_api_ke
 from app.core.config import RATE_LIMIT, limiter
 from app.db.database import get_db
 from app.db.models import TranscriptionRequest, User
+from app.schemas.transcribe import ClientLogIn
 from app.services.file_validation import validate_audio_upload
-from app.services.subscription_service import get_user_plan
+from app.services.subscription_service import get_active_subscription, get_user_plan
+from app.services.text_analyzer import LANG_NAMES
 from app.services.transcription_orchestrator import run_transcription
 
 
@@ -224,3 +226,113 @@ async def transcribe(
         raise HTTPException(500, "Transcription failed. Please try again later.")
 
     return JSONResponse(content=response_data)
+
+
+# Anti-abuse ceiling for client-side logs. We deliberately do NOT charge these
+# against the daily transcription quota — the whole point of on-device STT is
+# to give users unlimited free transcriptions. But we still cap raw insert
+# volume per user/day so a compromised token can't fill the table.
+CLIENT_LOG_DAILY_CAP = 500
+
+
+def _word_count(text: str) -> int:
+    stripped = text.strip()
+    if not stripped:
+        return 0
+    return len(stripped.split())
+
+
+def _resolve_plan_source(sub, plan) -> str:
+    """Snapshot label matching the orchestrator's logic, extracted so the
+    client-log handler can reuse it without inflating cyclomatic complexity."""
+    if sub is None:
+        return "free"
+    if sub.coupon_id:
+        return "coupon"
+    if plan and plan.name != "free":
+        return "purchase"
+    return "free"
+
+
+@router.post("/transcriptions/log")
+@limiter.limit(RATE_LIMIT)
+async def log_client_transcription(
+    request: Request,
+    payload: ClientLogIn,
+    user: User = Depends(get_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Persist metadata from an on-device transcription.
+
+    Used when the mobile app's OS-level speech recognizer (Apple Speech /
+    Android SpeechRecognizer) produced the text locally. Skips the entire
+    Whisper/Gemini pipeline and the daily quota counter — these rows are
+    flagged ``provider_used='client_side'`` so admin dashboards and quota
+    code can tell them apart.
+
+    Still rate-limited per-principal and capped at ``CLIENT_LOG_DAILY_CAP``
+    inserts/day/user as belt-and-suspenders against token compromise.
+    """
+    check_rpm_limit(request, user, db)
+
+    today = _today_start_utc()
+    todays_logs = db.query(func.count(TranscriptionRequest.id)).filter(
+        TranscriptionRequest.user_id == user.id,
+        TranscriptionRequest.created_at >= today,
+        TranscriptionRequest.provider_used == "client_side",
+    ).scalar() or 0
+    if todays_logs >= CLIENT_LOG_DAILY_CAP:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "client_log_cap_exceeded",
+                "limit": CLIENT_LOG_DAILY_CAP,
+            },
+        )
+
+    plan = getattr(request.state, "plan", None) or get_user_plan(db, user.id)
+    sub = get_active_subscription(db, user.id)
+    plan_source = _resolve_plan_source(sub, plan)
+
+    text = payload.text.strip()
+    lang_code = payload.lang.split("-", 1)[0].lower()
+    lang_name = payload.lang_name or LANG_NAMES.get(lang_code, lang_code)
+    resolved_source = "recording" if payload.is_live_recording else payload.source
+
+    row = TranscriptionRequest(
+        user_id=user.id,
+        api_key_id=None,
+        filename=None,
+        duration_seconds=payload.duration_seconds,
+        processed_seconds=payload.duration_seconds,
+        language=lang_code,
+        word_count=_word_count(text),
+        was_trimmed=False,
+        status="completed",
+        source=resolved_source,
+        is_live_recording=payload.is_live_recording,
+        plan_name_at_request=plan.name if plan else "free",
+        plan_source_at_request=plan_source,
+        daily_limit_at_request=plan.daily_request_limit if plan else None,
+        monthly_limit_at_request=plan.monthly_request_limit if plan else None,
+        daily_used_at_request=todays_logs,
+        provider_used="client_side",
+        model_used=payload.client_engine,
+        latency_ms=None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    return JSONResponse(content={
+        "request_id": row.id,
+        "text": text,
+        "lang": lang_code,
+        "lang_name": lang_name,
+        "duration": payload.duration_seconds,
+        "word_count": row.word_count,
+        "char_count": len(text),
+        "segments": None,
+        "was_trimmed": False,
+        "provider_used": "client_side",
+    })

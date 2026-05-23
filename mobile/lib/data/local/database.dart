@@ -33,7 +33,7 @@ class LocalDatabase {
     final path = join(await getDatabasesPath(), 'bisawtak.db');
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE transcriptions (
@@ -50,9 +50,19 @@ class LocalDatabase {
             source TEXT DEFAULT 'uploaded',
             source_app TEXT,
             original_filename TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            provider_used TEXT
           )
         ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        // v1 → v2: track which engine produced each row so the UI can show
+        // "via server" vs "on-device" and so we know what to migrate later.
+        if (oldVersion < 2) {
+          await db.execute(
+            "ALTER TABLE transcriptions ADD COLUMN provider_used TEXT",
+          );
+        }
       },
     );
   }

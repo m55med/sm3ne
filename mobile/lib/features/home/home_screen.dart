@@ -12,8 +12,10 @@ import 'package:record/record.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/analytics/analytics_service.dart';
+import 'package:bisawtak/core/stt/stt_orchestrator.dart';
 import 'package:bisawtak/data/repositories/transcription_repository.dart';
 import 'package:bisawtak/data/models/transcription.dart';
+import 'package:bisawtak/main.dart' show localeProvider;
 import 'package:bisawtak/shared/utils/error_messages.dart';
 import 'package:bisawtak/shared/utils/haptics.dart';
 import 'package:bisawtak/shared/widgets/confirm_dialog.dart';
@@ -43,6 +45,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   // Upload progress (0..1). Null while not uploading.
   double? _uploadProgress;
+
+  // Active on-device STT session for the current recording. Null when not
+  // recording, or when on-device STT is disabled/unavailable — in which
+  // case _stopAndSend falls back to the server-only path automatically.
+  LiveRecordingSession? _sttSession;
 
   @override
   void initState() {
@@ -155,6 +162,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         path: path,
       );
 
+      // Spin up the on-device recognizer in parallel with the WAV writer.
+      // The session keeps the WAV as a fallback — if on-device fails (low
+      // confidence, no recognizer, denied speech permission, …) we upload
+      // it. If it succeeds we delete the WAV after the metadata-only log.
+      final uiLocale = ref.read(localeProvider)?.languageCode;
+      try {
+        _sttSession = await ref
+            .read(sttOrchestratorProvider)
+            .startLive(uiLocale: uiLocale ?? 'ar');
+      } catch (_) {
+        // Never block recording on STT init. If startLive throws (denied
+        // permission, no recognizer, …) we just don't have on-device for
+        // this session — the WAV will go to the server like before.
+        _sttSession = null;
+      }
+
       _currentRecordingPath = path;
       _recordingStartedAt = DateTime.now();
       _elapsed = Duration.zero;
@@ -197,12 +220,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     } catch (_) {}
     recordedPath ??= _currentRecordingPath;
 
+    final session = _sttSession;
+    _sttSession = null;
+
     setState(() => _isRecording = false);
     Haptics.success();
 
-    if (recordedPath == null) return;
+    if (recordedPath == null) {
+      // Recorder produced nothing — best-effort cleanup of the STT session
+      // so the next recording starts clean.
+      if (session != null) await session.cancel();
+      return;
+    }
     if (_elapsed.inMilliseconds < 800) {
       _safeDelete(recordedPath);
+      if (session != null) await session.cancel();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('التسجيل قصير جداً')),
@@ -211,7 +243,84 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       return;
     }
 
-    await _processFile(recordedPath, source: 'recorded', isLiveRecording: true);
+    final durationSec = _elapsed.inMilliseconds / 1000.0;
+    if (session != null) {
+      await _finishLiveSession(session, recordedPath, durationSec);
+    } else {
+      // No on-device session — upload the WAV the legacy way.
+      await _processFile(recordedPath, source: 'recorded', isLiveRecording: true);
+    }
+  }
+
+  /// Finalizes a recording that had an on-device STT session attached.
+  /// Either logs the on-device text (cheap path) or uploads the WAV as a
+  /// fallback. Either way the WAV is deleted at the end.
+  Future<void> _finishLiveSession(
+    LiveRecordingSession session,
+    String wavPath,
+    double durationSec,
+  ) async {
+    final online = await hasInternetConnection();
+    if (!online) {
+      _safeDelete(wavPath);
+      await session.cancel();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('لا يوجد اتصال بالإنترنت.'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() {
+      _isProcessing = true;
+      _uploadProgress = 0;
+    });
+    final analytics = ref.read(analyticsProvider);
+    await analytics.transcriptionStarted('recorded');
+    final uiLocale = ref.read(localeProvider)?.languageCode ?? 'ar';
+    try {
+      final result = await session.finish(
+        wavPath: wavPath,
+        durationSeconds: durationSec,
+        uiLocale: uiLocale,
+        onSendProgress: (sent, total) {
+          if (!mounted || total <= 0) return;
+          setState(() => _uploadProgress = (sent / total).clamp(0.0, 1.0));
+        },
+      );
+      await analytics.transcriptionCompleted(
+        source: 'recorded',
+        durationSeconds: result.transcription.duration.round(),
+        wordCount: result.transcription.wordCount,
+      );
+      if (mounted) {
+        Haptics.success();
+        _showResult(result.transcription);
+      }
+    } catch (e) {
+      await analytics.transcriptionFailed('recorded');
+      Haptics.error();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(friendlyErrorMessage(e)),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    } finally {
+      _safeDelete(wavPath);
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _uploadProgress = null;
+        });
+      }
+    }
   }
 
   Future<void> _cancelRecording() async {
@@ -220,6 +329,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     try {
       await _recorder.stop();
     } catch (_) {}
+    final session = _sttSession;
+    _sttSession = null;
+    if (session != null) await session.cancel();
     final path = _currentRecordingPath;
     if (path != null) _safeDelete(path);
     setState(() => _isRecording = false);
@@ -341,6 +453,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         style: TextStyle(color: Colors.white),
                       ),
                       backgroundColor: Theme.of(ctx).colorScheme.primary,
+                    ),
+                  // On-device path leaves provider_used='client_side'. The
+                  // server path stamps the actual provider name. We only
+                  // surface the latter so users understand when their quota
+                  // dropped vs when the recording stayed free on-device.
+                  if (!t.isClientSide && t.providerUsed != null)
+                    const Chip(
+                      avatar: Icon(Icons.cloud, size: 16),
+                      label: Text('عبر الخادم'),
                     ),
                 ],
               ),

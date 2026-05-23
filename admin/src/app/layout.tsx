@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Cairo } from "next/font/google";
+import { ThemeProvider, themeInitScript } from "@/components/theme-provider";
 import "./globals.css";
 
 const cairo = Cairo({
@@ -19,8 +20,17 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ar" dir="rtl" className={`${cairo.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col font-[family-name:var(--font-cairo)]">
-        {children}
+      <head>
+        {/* Sets `dark` class on <html> BEFORE first paint to avoid a flash
+            of light theme. Inline-script-injection is required for this
+            ordering — the value is a hardcoded constant (no user input),
+            so the "no dangerouslySetInnerHTML" rule (admin CLAUDE.md) is
+            intentionally relaxed here. */}
+        {/* eslint-disable-next-line react/no-danger */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
+      <body className="min-h-full flex flex-col font-[family-name:var(--font-cairo)] bg-background text-foreground">
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );

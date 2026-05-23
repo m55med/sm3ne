@@ -7,6 +7,7 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    BisawtakDiag.log(tag: "apns_native", msg: "app_launched bundle=\(Bundle.main.bundleIdentifier ?? "?")")
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -24,5 +25,57 @@ import UIKit
       return true
     }
     return super.application(app, open: url, options: options)
+  }
+
+  // -- APNs registration probes ---------------------------------------------
+  // Apple invokes one of these two callbacks after
+  // `registerForRemoteNotifications`. Firebase swizzling normally captures
+  // them and surfaces them via FCM — but in some setups the FAILURE
+  // callback fires and Firebase silently logs it. Override both so we can
+  // mirror the EXACT error to /diag/log and finally see what Apple is
+  // refusing for.
+
+  override func application(
+    _ application: UIApplication,
+    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+  ) {
+    let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
+    let preview = String(hex.prefix(16))
+    BisawtakDiag.log(tag: "apns_native", msg: "didRegister token_prefix=\(preview)… len=\(deviceToken.count)")
+    super.application(application, didRegisterForRemoteNotificationsWithDeviceToken: deviceToken)
+  }
+
+  override func application(
+    _ application: UIApplication,
+    didFailToRegisterForRemoteNotificationsWithError error: Error
+  ) {
+    let ns = error as NSError
+    // Logs everything so the server-side diag has enough to attribute the
+    // failure: no iCloud, no internet to APNs, sandbox/production mismatch,
+    // app entitlement missing, ...
+    let info = String(describing: ns.userInfo).prefix(200)
+    BisawtakDiag.log(
+      tag: "apns_native",
+      msg: "didFail domain=\(ns.domain) code=\(ns.code) desc=\(ns.localizedDescription) userInfo=\(info)"
+    )
+    super.application(application, didFailToRegisterForRemoteNotificationsWithError: error)
+  }
+}
+
+/// Fire-and-forget native logger that mirrors our Flutter `RemoteLogger`.
+/// Needed because the two APNs callbacks above can fire BEFORE the Flutter
+/// engine is fully ready to dispatch a method-channel call — using a pure
+/// URLSession POST sidesteps that ordering problem entirely.
+private enum BisawtakDiag {
+  static func log(tag: String, msg: String) {
+    NSLog("[BisawtakDiag][\(tag)] \(msg)")
+    guard let url = URL(string: "https://voice.neojeen.com/api/v1/diag/log") else { return }
+    var req = URLRequest(url: url, timeoutInterval: 5)
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    let safeMsg = msg.count > 480 ? String(msg.prefix(480)) + "…" : msg
+    let payload: [String: String] = ["tag": tag, "msg": safeMsg]
+    req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+    URLSession.shared.dataTask(with: req).resume()
   }
 }

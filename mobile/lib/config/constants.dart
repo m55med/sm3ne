@@ -13,6 +13,16 @@ class AppConstants {
   // Free plan limit (in seconds) for free users
   static const int freeMaxSeconds = 30;
 
+  // On-device speech recognition kill switch. Built-time override:
+  //   flutter build --dart-define=ON_DEVICE_STT=false
+  // When false, the orchestrator always uploads to /transcribe (legacy path).
+  // The runtime user toggle in Settings is layered ON TOP — both must be true
+  // for on-device to be attempted.
+  static const bool onDeviceSttEnabled = bool.fromEnvironment(
+    'ON_DEVICE_STT',
+    defaultValue: true,
+  );
+
   // Google Sign-In — the WEB OAuth client ID. Passed to GoogleSignIn as
   // `serverClientId` so the returned idToken's `aud` claim matches what the
   // backend verifies against. The Android SDK rejects sign-in with

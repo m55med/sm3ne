@@ -13,6 +13,10 @@ class Transcription {
   final String? sourceApp;
   final String? originalFilename;
   final String createdAt;
+  // Engine that produced the text. 'client_side' means on-device STT (no
+  // audio uploaded). Anything else (whisper/gemini/null) means the server
+  // ran the transcription. Drives the "via server" chip on the result sheet.
+  final String? providerUsed;
 
   Transcription({
     this.id,
@@ -29,7 +33,10 @@ class Transcription {
     this.sourceApp,
     this.originalFilename,
     required this.createdAt,
+    this.providerUsed,
   });
+
+  bool get isClientSide => providerUsed == 'client_side';
 
   factory Transcription.fromApiResponse(Map<String, dynamic> json, {String source = 'uploaded', String? sourceApp}) {
     return Transcription(
@@ -45,6 +52,7 @@ class Transcription {
       source: source,
       sourceApp: sourceApp,
       originalFilename: null,
+      providerUsed: json['provider_used'],
       // Always store timestamps in UTC. The UI converts back via
       // .toLocal() when rendering — that way the row keeps its meaning
       // even if the user switches timezones between creating and viewing.
@@ -67,6 +75,7 @@ class Transcription {
       'source_app': sourceApp,
       'original_filename': originalFilename,
       'created_at': createdAt,
+      'provider_used': providerUsed,
     };
   }
 
@@ -86,6 +95,7 @@ class Transcription {
       sourceApp: map['source_app'],
       originalFilename: map['original_filename'],
       createdAt: map['created_at'] ?? '',
+      providerUsed: map['provider_used'],
     );
   }
 }

@@ -5,6 +5,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
+import 'package:bisawtak/core/stt/on_device_stt_pref.dart';
 import 'package:bisawtak/data/repositories/profile_repository.dart';
 import 'package:bisawtak/main.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
@@ -26,6 +27,7 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeModeProvider);
     final locale = ref.watch(localeProvider);
+    final onDeviceStt = ref.watch(onDeviceSttPrefProvider);
     final versionAsync = ref.watch(_appVersionProvider);
     final scheme = Theme.of(context).colorScheme;
     final chevron = Icon(forwardChevron(context));
@@ -50,6 +52,19 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: Text(_languageLabel(locale)),
             trailing: chevron,
             onTap: () => _showLanguageDialog(context, ref, locale),
+          ),
+          const Divider(height: 1),
+          // On-device speech recognition — defaults to ON. Turning it off
+          // routes every recording through the backend (uses daily quota).
+          SwitchListTile(
+            secondary: const Icon(Icons.phonelink_ring),
+            title: const Text('التعرّف على الصوت داخل الجهاز'),
+            subtitle: const Text(
+              'أسرع وأكثر خصوصية ولا يُخصم من باقتك. عند تعذّره يتم استخدام الخادم تلقائياً.',
+            ),
+            value: onDeviceStt,
+            onChanged: (v) =>
+                ref.read(onDeviceSttPrefProvider.notifier).setEnabled(v),
           ),
           const Divider(height: 1),
           // Change password

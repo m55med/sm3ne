@@ -174,7 +174,24 @@ class NotificationService {
         'fcm_reg',
         'fcm_token ${token == null ? "NULL_after_retries" : "ok len=${token.length}"}',
       );
-      if (token == null) return;
+      // Even when APNs failed on a physical device (Apple's registration is
+      // sometimes flaky on freshly-installed builds), we still register the
+      // device row with a placeholder + push_enabled=false. This way the
+      // admin always sees the device in /devices — surfacing the failure
+      // visibly is way better than the previous silent return.
+      if (token == null) {
+        final info = await _collectDeviceInfo();
+        final fingerprint = (info['device_model'] as String? ?? 'unknown').hashCode.abs();
+        await _postRegistration(
+          token: 'ios-no-apns-$fingerprint',
+          pushEnabled: false,
+        );
+        RemoteLogger.log(
+          'fcm_reg',
+          'registered_without_apns (push disabled, will retry on next login)',
+        );
+        return;
+      }
 
       // Remember the latest token so logout can deregister it.
       try {

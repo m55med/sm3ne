@@ -14,25 +14,25 @@ export function FAQ() {
   const [open, setOpen] = useState<number | null>(null);
 
   return (
-    <section id="faq" className="py-20 bg-gray-50">
+    <section id="faq" className="py-20 bg-gray-50 dark:bg-muted/30">
       <div className="max-w-3xl mx-auto px-6">
         <div className="text-center mb-16">
-          <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">أسئلة شائعة</h2>
+          <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-foreground mb-4">أسئلة شائعة</h2>
         </div>
         <div className="space-y-3">
           {faqs.map((faq, i) => (
-            <div key={i} className="bg-white rounded-xl overflow-hidden">
+            <div key={i} className="bg-white dark:bg-card border border-transparent dark:border-border rounded-xl overflow-hidden">
               <button
                 onClick={() => setOpen(open === i ? null : i)}
-                className="w-full flex items-center justify-between p-5 text-right hover:bg-gray-50 transition"
+                className="w-full flex items-center justify-between p-5 text-right hover:bg-gray-50 dark:hover:bg-muted transition"
               >
-                <span className="font-semibold text-gray-900">{faq.q}</span>
-                <span className={`text-gray-400 transition-transform duration-200 ${open === i ? "rotate-180" : ""}`}>
+                <span className="font-semibold text-gray-900 dark:text-foreground">{faq.q}</span>
+                <span className={`text-gray-400 dark:text-muted-foreground transition-transform duration-200 ${open === i ? "rotate-180" : ""}`}>
                   ▼
                 </span>
               </button>
               {open === i && (
-                <div className="px-5 pb-5 text-gray-600 leading-relaxed">
+                <div className="px-5 pb-5 text-gray-600 dark:text-muted-foreground leading-relaxed">
                   {faq.a}
                 </div>
               )}

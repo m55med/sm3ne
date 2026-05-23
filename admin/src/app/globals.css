@@ -128,3 +128,69 @@
     @apply font-sans;
   }
 }
+
+/* -----------------------------------------------------------------------
+   Dark-mode safety net for hardcoded utility classes that predate the
+   dark-mode rollout. Many pages still use literal Tailwind greys (e.g.
+   `bg-white`, `text-gray-900`) instead of the semantic tokens. Rather
+   than editing every page individually, we re-route these to the design
+   tokens whenever they appear inside `.dark`. Pages migrated to the
+   semantic tokens (`bg-card`, `text-foreground`, ...) are unaffected.
+   ----------------------------------------------------------------------- */
+.dark .bg-white         { background-color: var(--card); }
+.dark .bg-gray-50       { background-color: var(--muted); }
+.dark .bg-gray-100      { background-color: oklch(0.25 0 0); }
+.dark .bg-gray-200      { background-color: oklch(0.30 0 0); }
+
+.dark .text-gray-900    { color: var(--foreground); }
+.dark .text-gray-800    { color: var(--foreground); }
+.dark .text-gray-700    { color: oklch(0.90 0 0); }
+.dark .text-gray-600    { color: var(--muted-foreground); }
+.dark .text-gray-500    { color: var(--muted-foreground); }
+.dark .text-gray-400    { color: oklch(0.60 0 0); }
+
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-gray-300  { border-color: var(--border); }
+
+.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--border);
+}
+
+/* Subtle accent surfaces that the design uses for emphasis (e.g. selected
+   nav item, info card). Switch to deeper, lower-saturation versions in
+   dark mode so they read as "tinted" instead of "glowing". */
+.dark .bg-blue-50       { background-color: oklch(0.27 0.05 240 / 0.55); }
+.dark .bg-amber-50      { background-color: oklch(0.27 0.07 70  / 0.55); }
+.dark .bg-emerald-50    { background-color: oklch(0.27 0.06 165 / 0.55); }
+.dark .bg-red-50        { background-color: oklch(0.27 0.07 25  / 0.55); }
+.dark .bg-green-50      { background-color: oklch(0.27 0.06 145 / 0.55); }
+.dark .bg-yellow-50     { background-color: oklch(0.27 0.07 90  / 0.55); }
+
+.dark .text-blue-700    { color: oklch(0.78 0.12 240); }
+.dark .text-blue-600    { color: oklch(0.78 0.12 240); }
+.dark .text-amber-800   { color: oklch(0.82 0.12 70);  }
+.dark .text-emerald-700 { color: oklch(0.80 0.12 165); }
+.dark .text-red-700,
+.dark .text-red-600     { color: oklch(0.80 0.15 25);  }
+.dark .text-green-700   { color: oklch(0.80 0.12 145); }
+
+.dark .border-blue-100,
+.dark .border-blue-200  { border-color: oklch(0.45 0.10 240 / 0.4); }
+.dark .border-amber-200 { border-color: oklch(0.45 0.10 70 / 0.4); }
+.dark .border-red-200   { border-color: oklch(0.45 0.10 25 / 0.4); }
+
+/* Native form controls (`<select>`, `<input type="date">`) don't auto-
+   theme because they sit outside React. Inherit the page background so
+   they don't render as white islands inside a dark surface. */
+.dark select,
+.dark input[type="date"],
+.dark input[type="time"],
+.dark input[type="datetime-local"],
+.dark input[type="month"],
+.dark input[type="week"] {
+  background-color: var(--card);
+  color: var(--foreground);
+  color-scheme: dark;
+}

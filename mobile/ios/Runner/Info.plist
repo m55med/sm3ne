@@ -113,6 +113,8 @@
 	<string>ca-app-pub-3940256099942544~1458002511</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>بصوتك يحتاج الوصول للميكروفون لتسجيل الصوت وتحويله لنص</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>يستخدم بصوتك التعرّف على الصوت داخل الجهاز لتحويل صوتك إلى نص بدون رفع التسجيل إلى الخادم.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

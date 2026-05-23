@@ -135,6 +135,11 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
                             Chip(label: Text(_result!.languageName)),
                             Chip(label: Text('${_result!.duration.toStringAsFixed(1)}ث')),
                             Chip(label: Text('${_result!.wordCount} كلمة')),
+                            if (!_result!.isClientSide && _result!.providerUsed != null)
+                              const Chip(
+                                avatar: Icon(Icons.cloud, size: 16),
+                                label: Text('عبر الخادم'),
+                              ),
                           ],
                         ),
                         const SizedBox(height: 16),
