@@ -106,6 +106,15 @@ class NotificationService {
       'start platform=${Platform.operatingSystem}',
     );
     try {
+      // Detect simulator (iOS) / emulator (Android) up-front. iOS Simulator
+      // can NEVER receive a real APNs token — Apple platform limitation —
+      // so we short-circuit the 60s polling and register the row with a
+      // synthetic placeholder + push_enabled=false. This still surfaces the
+      // device in the admin /devices page (useful for dev/QA) and skips the
+      // pointless wait. Android emulator gets real FCM tokens, so no
+      // shortcut needed there.
+      final isSimulator = Platform.isIOS && !await _isPhysicalDevice();
+
       final settings = await _messaging.requestPermission(
         alert: true,
         badge: true,
@@ -116,33 +125,54 @@ class NotificationService {
               settings.authorizationStatus == AuthorizationStatus.provisional;
       RemoteLogger.log(
         'fcm_reg',
-        'perm=${settings.authorizationStatus.name} granted=$granted',
+        'perm=${settings.authorizationStatus.name} granted=$granted simulator=$isSimulator',
       );
 
+      if (isSimulator) {
+        // Synthetic token = "ios-sim-<device-uuid>" so it's stable across
+        // hot-reloads but distinct per simulator. Backend just stores it as
+        // a string; push_enabled=false ensures it's never targeted by a
+        // real FCM send.
+        final info = await _collectDeviceInfo();
+        final uuid = (info['device_model'] as String? ?? 'unknown').hashCode.abs();
+        await _postRegistration(
+          token: 'ios-simulator-$uuid',
+          pushEnabled: false,
+        );
+        RemoteLogger.log('fcm_reg', 'simulator_registered (push disabled)');
+        return;
+      }
+
       if (Platform.isIOS) {
-        // On iOS we need the APNS token to be ready before FCM hands us a
-        // usable registration token. Polls every 500ms for up to 10s.
+        // Physical device path: APNs registration is async and can take
+        // 30+s on cold-start. Poll for up to 60s but don't bail — try
+        // getToken() afterwards regardless.
         String? apns;
-        for (var i = 0; i < 20; i++) {
+        for (var i = 0; i < 120; i++) {
           apns = await _messaging.getAPNSToken();
           if (apns != null) break;
           await Future<void>.delayed(const Duration(milliseconds: 500));
         }
         RemoteLogger.log(
           'fcm_reg',
-          'apns_token ${apns == null ? "NULL_after_10s" : "ok len=${apns.length}"}',
+          'apns_token ${apns == null ? "NULL_after_60s_continuing_anyway" : "ok len=${apns.length}"}',
         );
-        if (apns == null) {
-          // No APNs token = FCM will return null too. Bail early with a
-          // clear log line so we know why iOS never made it to /register.
-          return;
-        }
       }
 
-      final token = await _messaging.getToken();
+      // On iOS, getToken() can throw if APNs isn't ready — wrap and retry.
+      String? token;
+      for (var i = 0; i < 5; i++) {
+        try {
+          token = await _messaging.getToken();
+          if (token != null) break;
+        } catch (e) {
+          RemoteLogger.log('fcm_reg', 'getToken_attempt_${i}_err: $e');
+        }
+        await Future<void>.delayed(const Duration(seconds: 3));
+      }
       RemoteLogger.log(
         'fcm_reg',
-        'fcm_token ${token == null ? "NULL" : "ok len=${token.length}"}',
+        'fcm_token ${token == null ? "NULL_after_retries" : "ok len=${token.length}"}',
       );
       if (token == null) return;
 
@@ -196,6 +226,22 @@ class NotificationService {
       );
     } catch (e) {
       RemoteLogger.log('fcm_reg', 'post_register_err msg=$e');
+    }
+  }
+
+  /// Whether the current device is a real iPhone/iPad (false on simulator).
+  /// device_info_plus's `isPhysicalDevice` is true on hardware, false on
+  /// simulator — used to short-circuit the APNs-token retry loop, which can
+  /// never succeed on simulator.
+  Future<bool> _isPhysicalDevice() async {
+    try {
+      final info = await DeviceInfoPlugin().iosInfo;
+      return info.isPhysicalDevice;
+    } catch (_) {
+      // If device_info_plus fails for any reason, assume physical and let
+      // the existing retry loop do its thing — failing closed here would
+      // mean real devices get the simulator placeholder, which is worse.
+      return true;
     }
   }
 
