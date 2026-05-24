@@ -8,6 +8,21 @@ import UIKit
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     BisawtakDiag.log(tag: "apns_native", msg: "app_launched bundle=\(Bundle.main.bundleIdentifier ?? "?")")
+    // Belt-and-braces: explicitly kick off APNs registration. The Firebase
+    // Messaging plugin's auto-swizzling SHOULD do this after the user grants
+    // notification permission, but in production we saw it silently skip on
+    // some devices (perm granted, but `didRegister`/`didFail` never fired
+    // → no APNs token → no FCM token → no /devices/register). Calling
+    // registerForRemoteNotifications here forces Apple to invoke one of the
+    // two delegate callbacks deterministically.
+    //
+    // It's safe to call even when the user hasn't granted permission yet —
+    // iOS just no-ops in that case. Once they accept the prompt later, the
+    // Firebase plugin re-calls this; idempotent.
+    DispatchQueue.main.async {
+      application.registerForRemoteNotifications()
+      BisawtakDiag.log(tag: "apns_native", msg: "registerForRemoteNotifications_called")
+    }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
