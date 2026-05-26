@@ -180,6 +180,13 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
         supportedLocales: AppLocalizations.supportedLocales,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         home: ShareHandlerScreen(
+          // The Key ensures Flutter unmounts the previous instance and
+          // creates a fresh one whenever a NEW shared file arrives — i.e.
+          // when the user shares another WhatsApp voice while the previous
+          // result is still on screen. Without this, the old transcription
+          // would stay visible because initState only runs on the first
+          // mount.
+          key: ValueKey(sharedFile),
           filePath: sharedFile,
           onDone: () => ref.read(sharedFileProvider.notifier).dismiss(),
         ),

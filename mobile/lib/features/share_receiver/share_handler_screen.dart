@@ -29,6 +29,23 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
     _process();
   }
 
+  @override
+  void didUpdateWidget(covariant ShareHandlerScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Fallback for the case where Flutter reuses this widget instance
+    // because the parent didn't supply a Key on filePath (main.dart now
+    // does, but defending here keeps the screen correct regardless of how
+    // it's mounted in the future).
+    if (oldWidget.filePath != widget.filePath) {
+      setState(() {
+        _result = null;
+        _error = null;
+        _processing = true;
+      });
+      _process();
+    }
+  }
+
   Future<void> _process() async {
     try {
       // Defense-in-depth: even though routes.dart hardens the deep-link path,

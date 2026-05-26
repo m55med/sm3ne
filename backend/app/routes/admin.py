@@ -547,6 +547,10 @@ async def list_requests(
     api_key_id: Optional[int] = None,
     language: Optional[str] = None,
     source: Optional[str] = None,
+    # Filter by the engine that produced the transcription. Useful for
+    # comparing on-device (`client_side`) volume against server providers
+    # (`whisper` / `gemini` / `speechmatics` / `groq` / `assemblyai`).
+    provider_used: Optional[str] = None,
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
@@ -559,6 +563,8 @@ async def list_requests(
         q = q.filter(TranscriptionRequest.language == language)
     if source:
         q = q.filter(TranscriptionRequest.source == source)
+    if provider_used:
+        q = q.filter(TranscriptionRequest.provider_used == provider_used)
 
     total = q.count()
     reqs = q.order_by(TranscriptionRequest.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()

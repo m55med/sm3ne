@@ -64,6 +64,31 @@ const SOURCE_FILTERS: { value: string; label: string }[] = [
   { value: "telegram", label: "تيليجرام" },
 ];
 
+// `client_side` rows are the on-device STT path — no audio uploaded, no
+// quota consumed, no per-request cost. Surfacing them as a first-class
+// filter lets us track how much load the OS-level recognizer is absorbing.
+const PROVIDER_FILTERS: { value: string; label: string }[] = [
+  { value: "", label: "كل المُحركات" },
+  { value: "client_side", label: "داخل الجهاز" },
+  { value: "whisper", label: "Whisper" },
+  { value: "gemini", label: "Gemini" },
+  { value: "speechmatics", label: "Speechmatics" },
+  { value: "groq", label: "Groq" },
+  { value: "assemblyai", label: "AssemblyAI" },
+];
+
+// Pretty-prints the engine identifier shown in the table cell. We special-case
+// `client_side` so the badge reads as an Arabic label instead of a slug, and
+// so the eye picks out "free, on-device" volume at a glance.
+const PROVIDER_DISPLAY: Record<string, { label: string; isClientSide: boolean }> = {
+  client_side: { label: "داخل الجهاز", isClientSide: true },
+};
+
+const CLIENT_ENGINE_LABEL: Record<string, string> = {
+  apple_speech: "Apple Speech",
+  android_speech: "Android Speech",
+};
+
 function truncateError(msg: string | null | undefined): string | undefined {
   if (!msg) return undefined;
   // Trim and limit to MAX_ERROR_MSG chars. Strip newlines so tooltip stays tidy.
@@ -78,6 +103,7 @@ export default function RequestsPage() {
   const [page, setPage] = useState(1);
   const [langFilter, setLangFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
+  const [providerFilter, setProviderFilter] = useState("");
   const debouncedLang = useDebouncedValue(langFilter, 400);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
@@ -92,6 +118,7 @@ export default function RequestsPage() {
     });
     if (debouncedLang) params.set("language", debouncedLang);
     if (sourceFilter) params.set("source", sourceFilter);
+    if (providerFilter) params.set("provider_used", providerFilter);
     try {
       const r = await api<PaginatedResponse<RequestItem>>(
         `/admin/requests?${params}`
@@ -105,7 +132,7 @@ export default function RequestsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, debouncedLang, sourceFilter]);
+  }, [page, debouncedLang, sourceFilter, providerFilter]);
 
   // Mark typing when input value diverges from debounced value
   useEffect(() => {
@@ -161,6 +188,21 @@ export default function RequestsPage() {
               {SOURCE_FILTERS.map((s) => (
                 <option key={s.value} value={s.value}>
                   {s.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={providerFilter}
+              onChange={(e) => {
+                setProviderFilter(e.target.value);
+                setPage(1);
+              }}
+              className="h-9 rounded-lg border border-input bg-transparent px-2.5 text-sm"
+              aria-label="فلتر حسب المُحرك"
+            >
+              {PROVIDER_FILTERS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
                 </option>
               ))}
             </select>
@@ -279,20 +321,38 @@ export default function RequestsPage() {
                             );
                           })()}
                         </td>
-                        {/* النموذج المستخدم: المزوّد + الموديل الفعلي */}
+                        {/* النموذج المستخدم: المزوّد + الموديل الفعلي.
+                             `client_side` يبقى أخضر مميز لأنه مجاني وما بيستهلكش
+                             quota — مهم نقدر نشوف نسبته بنظرة واحدة. */}
                         <td className="py-3">
                           {r.provider_used ? (
                             <div className="flex flex-col gap-0.5 items-start">
-                              <Badge variant="secondary" className="text-[10px]">
-                                <span dir="ltr">{r.provider_used}</span>
-                              </Badge>
+                              {(() => {
+                                const display = PROVIDER_DISPLAY[r.provider_used];
+                                if (display?.isClientSide) {
+                                  return (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[10px] border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                    >
+                                      <span className="me-1">📱</span>
+                                      {display.label}
+                                    </Badge>
+                                  );
+                                }
+                                return (
+                                  <Badge variant="secondary" className="text-[10px]">
+                                    <span dir="ltr">{r.provider_used}</span>
+                                  </Badge>
+                                );
+                              })()}
                               {r.model_used && (
                                 <span
                                   className="text-[10px] text-gray-400 font-mono"
                                   dir="ltr"
                                   title={r.model_used}
                                 >
-                                  {r.model_used}
+                                  {CLIENT_ENGINE_LABEL[r.model_used] ?? r.model_used}
                                 </span>
                               )}
                             </div>
