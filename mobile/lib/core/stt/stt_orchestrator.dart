@@ -35,17 +35,73 @@ class SttOrchestrator {
     return prefs.getBool(onDeviceSttPrefsKey) ?? true;
   }
 
-  /// Files (uploaded or shared) go straight to the server. See class
-  /// docstring for the reasoning. Returns a [Transcription] just like the
-  /// repository would.
+  /// Files (uploaded or shared). On iOS we try on-device file recognition
+  /// FIRST via SFSpeechURLRecognitionRequest — that turns a WhatsApp voice
+  /// share into instant local text, free of server quota or upload latency.
+  /// On Android there's no native file-STT API, so we go straight to the
+  /// server (Whisper.cpp embedded would bloat the APK by 150+ MB).
+  ///
+  /// Fallbacks: any failure on the on-device path (no permission, no
+  /// recognizer for the locale, low confidence, > 1 min audio, unsupported
+  /// codec) routes to the existing `_repo.transcribeFile` so the user
+  /// always gets a result.
   Future<Transcription> transcribeFile(
     String filePath, {
     required String source,
     String? sourceApp,
     bool isLiveRecording = false,
+    String uiLocale = 'ar',
     void Function(int sent, int total)? onSendProgress,
     CancelToken? cancelToken,
-  }) {
+  }) async {
+    if (Platform.isIOS && await _userEnabled) {
+      final localeId = resolveSpeechLocale(uiLocale);
+      final result = await _onDevice.recognizeFile(
+        filePath: filePath,
+        localeId: localeId,
+      );
+      if (result.success && result.text.trim().isNotEmpty) {
+        // Use the same length/confidence gate the live path uses. Duration
+        // isn't precisely known here (we'd have to probe the file with
+        // ffmpeg) — passing 0 makes the gate effectively confidence-only,
+        // which is the right call for a transcribed result.
+        final ok = (_onDevice as SpeechToTextOnDeviceStt)
+            .meetsQualityBar(result.text, result.confidence, 0);
+        if (ok) {
+          // Estimate duration from the text length when not provided —
+          // mostly used for plan-quota stats. 3 words ~= 1 second of
+          // Arabic speech, give or take.
+          final wordCount = result.text.trim().split(RegExp(r'\s+')).length;
+          final estimatedSec = wordCount / 3.0;
+          try {
+            return await _repo.logClientTranscription(
+              text: result.text,
+              lang: _shortLocale(uiLocale),
+              langName: _localeName(uiLocale),
+              durationSeconds: estimatedSec,
+              source: source,
+              isLiveRecording: false,
+              clientEngine: result.engineName,
+            );
+          } catch (e) {
+            if (kDebugMode) {
+              debugPrint('client-side file log failed, falling back: $e');
+            }
+            // fall through to server upload
+          }
+        } else if (kDebugMode) {
+          debugPrint(
+            'on-device file STT below quality bar — falling back. '
+            'len=${result.text.length} conf=${result.confidence}',
+          );
+        }
+      } else if (kDebugMode) {
+        debugPrint(
+          'on-device file STT failed reason=${result.failureReason}',
+        );
+      }
+    }
+    // Android or any iOS failure → existing server pipeline.
     return _repo.transcribeFile(
       filePath,
       source: source,
@@ -54,6 +110,18 @@ class SttOrchestrator {
       onSendProgress: onSendProgress,
       cancelToken: cancelToken,
     );
+  }
+
+  String _shortLocale(String uiLocale) {
+    final c = uiLocale.toLowerCase();
+    if (c.startsWith('en')) return 'en';
+    return 'ar';
+  }
+
+  String _localeName(String uiLocale) {
+    final c = uiLocale.toLowerCase();
+    if (c.startsWith('en')) return 'English';
+    return 'العربية';
   }
 
   /// Starts a live recording session. Both the WAV writer (caller-owned)

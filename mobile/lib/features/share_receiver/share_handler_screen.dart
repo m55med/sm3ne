@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:bisawtak/core/stt/stt_orchestrator.dart';
 import 'package:bisawtak/data/repositories/transcription_repository.dart';
 import 'package:bisawtak/data/models/transcription.dart';
 import 'package:bisawtak/shared/utils/error_messages.dart';
@@ -60,10 +61,16 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
       }
       validateAudioFileForUpload(widget.filePath);
 
-      final result = await ref.read(transcriptionRepoProvider).transcribeFile(
+      // Route through the orchestrator (not the repo directly) so the
+      // on-device path is attempted first on iOS. The orchestrator falls
+      // back to the server automatically if the recognizer can't handle
+      // the file (locale unsupported, audio too long, low confidence, …).
+      final uiLocale = Localizations.localeOf(context).languageCode;
+      final result = await ref.read(sttOrchestratorProvider).transcribeFile(
         widget.filePath,
         source: 'shared',
         sourceApp: widget.sourceApp,
+        uiLocale: uiLocale,
       );
       if (!mounted) return;
       setState(() {

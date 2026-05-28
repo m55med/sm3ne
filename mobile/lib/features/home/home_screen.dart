@@ -373,10 +373,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final analytics = ref.read(analyticsProvider);
     await analytics.transcriptionStarted(source);
     try {
-      final transcription = await ref.read(transcriptionRepoProvider).transcribeFile(
+      final uiLocale = Localizations.localeOf(context).languageCode;
+      final transcription =
+          await ref.read(sttOrchestratorProvider).transcribeFile(
         path,
         source: source,
         isLiveRecording: isLiveRecording,
+        uiLocale: uiLocale,
         onSendProgress: (sent, total) {
           if (!mounted || total <= 0) return;
           setState(() => _uploadProgress = (sent / total).clamp(0.0, 1.0));

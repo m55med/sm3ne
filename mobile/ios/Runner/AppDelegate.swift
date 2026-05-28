@@ -1,4 +1,6 @@
 import Flutter
+import Foundation
+import Speech
 import UIKit
 
 @main
@@ -28,6 +30,13 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    // Register the on-device speech-file recognizer channel. Needs to run
+    // AFTER the plugin registrant so the messenger is alive. The channel
+    // sits separately from the `speech_to_text` plugin because that plugin
+    // only exposes mic input — file URLs need direct SFSpeechURLRecognition.
+    if let controller = window?.rootViewController as? FlutterViewController {
+      SpeechFileRecognizer.register(with: controller.binaryMessenger)
+    }
   }
 
   // Handle "Open with" file URLs
@@ -92,5 +101,187 @@ private enum BisawtakDiag {
     let payload: [String: String] = ["tag": tag, "msg": safeMsg]
     req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
     URLSession.shared.dataTask(with: req).resume()
+  }
+}
+
+/// Native bridge for transcribing an audio FILE on-device using Apple's
+/// SFSpeechURLRecognitionRequest. Lives outside the Flutter plugin because
+/// `speech_to_text` only exposes mic input — file input requires direct use
+/// of the Speech framework. We invoke it from Dart via MethodChannel
+/// `com.bisawtak/stt_file`.
+///
+/// Behavior:
+///   - Requires both speech-recognition authorization AND a readable file.
+///   - Forces `requiresOnDeviceRecognition = true` so we never silently
+///     send audio to Apple's servers.
+///   - Returns the FINAL result (not partials) when the file is fully
+///     consumed. Includes a confidence score so the orchestrator can apply
+///     its own quality gate.
+///   - 1-minute SFSpeechRecognizer limit is enforced at the request layer
+///     by Apple; longer files will throw and the caller falls back to the
+///     server pipeline.
+@objc class SpeechFileRecognizer: NSObject {
+  static let shared = SpeechFileRecognizer()
+
+  private var activeTask: SFSpeechRecognitionTask?
+
+  /// Registers the method channel. Called once from AppDelegate during
+  /// plugin registration.
+  static func register(with messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "com.bisawtak/stt_file",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "isAvailable":
+        SpeechFileRecognizer.shared.isAvailable(call, result: result)
+      case "recognize":
+        SpeechFileRecognizer.shared.recognize(call, result: result)
+      case "cancel":
+        SpeechFileRecognizer.shared.cancel()
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  // -- isAvailable: probe both authorization and recognizer for the locale.
+  // Returns a dictionary so Dart can show a precise reason ("not_authorized"
+  // / "no_recognizer" / "no_on_device_support") without surfacing all of
+  // Apple's enum cases.
+
+  private func isAvailable(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any] ?? [:]
+    let localeId = args["localeId"] as? String ?? "ar-EG"
+    let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId))
+    let auth = SFSpeechRecognizer.authorizationStatus()
+
+    var supportsOnDevice = false
+    if let r = recognizer {
+      supportsOnDevice = r.supportsOnDeviceRecognition
+    }
+
+    result([
+      "auth_status": Self.authStatusString(auth),
+      "recognizer_available": recognizer?.isAvailable ?? false,
+      "supports_on_device": supportsOnDevice,
+    ])
+  }
+
+  // -- recognize: the workhorse. Awaits authorization, then runs the
+  // SFSpeechURLRecognitionRequest synchronously (well, async via callback)
+  // and packages the FINAL result.
+
+  private func recognize(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any] ?? [:]
+    guard let filePath = args["filePath"] as? String else {
+      result(["success": false, "reason": "missing_filePath"])
+      return
+    }
+    let localeId = args["localeId"] as? String ?? "ar-EG"
+
+    SFSpeechRecognizer.requestAuthorization { status in
+      DispatchQueue.main.async {
+        guard status == .authorized else {
+          result([
+            "success": false,
+            "reason": "not_authorized:\(Self.authStatusString(status))",
+          ])
+          return
+        }
+        self.performRecognition(filePath: filePath, localeId: localeId, result: result)
+      }
+    }
+  }
+
+  private func performRecognition(
+    filePath: String,
+    localeId: String,
+    result: @escaping FlutterResult
+  ) {
+    let url = URL(fileURLWithPath: filePath)
+    guard FileManager.default.fileExists(atPath: url.path) else {
+      result(["success": false, "reason": "file_not_found"])
+      return
+    }
+
+    let locale = Locale(identifier: localeId)
+    guard let recognizer = SFSpeechRecognizer(locale: locale),
+          recognizer.isAvailable else {
+      result(["success": false, "reason": "recognizer_unavailable"])
+      return
+    }
+
+    // Forcing on-device guarantees no audio leaves the device. If the locale
+    // doesn't have an on-device model installed, the request errors out
+    // instantly and the orchestrator's fallback kicks in.
+    guard recognizer.supportsOnDeviceRecognition else {
+      result(["success": false, "reason": "no_on_device_support"])
+      return
+    }
+
+    let request = SFSpeechURLRecognitionRequest(url: url)
+    request.requiresOnDeviceRecognition = true
+    request.shouldReportPartialResults = false
+    if #available(iOS 16.0, *) {
+      request.addsPunctuation = true
+    }
+
+    // Cancel any prior in-flight task — only one file recognition at a time.
+    activeTask?.cancel()
+    activeTask = recognizer.recognitionTask(with: request) { recognition, error in
+      if let error = error {
+        let ns = error as NSError
+        // Common errors:
+        //  1101 (kAFAssistantErrorDomain) — file format or empty audio
+        //  1700  — locale not available on this device
+        result([
+          "success": false,
+          "reason": "task_error:\(ns.domain):\(ns.code):\(ns.localizedDescription)",
+        ])
+        self.activeTask = nil
+        return
+      }
+      guard let recognition = recognition else { return }
+      // Wait for the FINAL transcription before returning — partial
+      // callbacks fire every chunk.
+      if recognition.isFinal {
+        let text = recognition.bestTranscription.formattedString
+        // Average per-segment confidence; SFSpeech doesn't expose a single
+        // utterance-level number.
+        let segments = recognition.bestTranscription.segments
+        let confidence: Double
+        if segments.isEmpty {
+          confidence = 0
+        } else {
+          let total = segments.reduce(0.0) { $0 + Double($1.confidence) }
+          confidence = total / Double(segments.count)
+        }
+        result([
+          "success": true,
+          "text": text,
+          "confidence": confidence,
+          "segment_count": segments.count,
+        ])
+        self.activeTask = nil
+      }
+    }
+  }
+
+  private func cancel() {
+    activeTask?.cancel()
+    activeTask = nil
+  }
+
+  private static func authStatusString(_ s: SFSpeechRecognizerAuthorizationStatus) -> String {
+    switch s {
+    case .authorized:      return "authorized"
+    case .denied:          return "denied"
+    case .restricted:      return "restricted"
+    case .notDetermined:   return "notDetermined"
+    @unknown default:      return "unknown"
+    }
   }
 }

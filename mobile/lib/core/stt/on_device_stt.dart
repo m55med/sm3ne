@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_recognition_error.dart';
@@ -75,6 +76,14 @@ abstract class OnDeviceStt {
 
   /// Stops listening and returns the accumulated result.
   Future<OnDeviceSttResult> stopLive();
+
+  /// Recognizes an audio FILE on-device. Currently iOS-only — Android has
+  /// no native file-based recognizer, so this returns a `not_supported`
+  /// failure there and the orchestrator falls back to the server.
+  Future<OnDeviceSttResult> recognizeFile({
+    required String filePath,
+    required String localeId,
+  });
 
   /// True once [initialize] succeeded.
   bool get isAvailable;
@@ -224,6 +233,52 @@ class SpeechToTextOnDeviceStt implements OnDeviceStt {
   /// bar after recording is finalized.
   bool meetsQualityBar(String text, double confidence, double recordedSec) {
     return _meetsQualityBar(text, confidence, recordedSec);
+  }
+
+  /// File recognition — iOS only via the native channel
+  /// `com.bisawtak/stt_file`. Android returns a `not_supported` failure
+  /// without making a channel call (no native handler is registered).
+  static const _fileChannel = MethodChannel('com.bisawtak/stt_file');
+
+  @override
+  Future<OnDeviceSttResult> recognizeFile({
+    required String filePath,
+    required String localeId,
+  }) async {
+    if (!Platform.isIOS) {
+      return OnDeviceSttResult.fail('not_supported', engineName: engineName);
+    }
+    try {
+      final raw = await _fileChannel.invokeMethod<dynamic>('recognize', {
+        'filePath': filePath,
+        'localeId': localeId,
+      });
+      if (raw is! Map) {
+        return OnDeviceSttResult.fail('bad_native_response', engineName: engineName);
+      }
+      final map = Map<String, dynamic>.from(raw);
+      final success = map['success'] == true;
+      if (!success) {
+        final reason = (map['reason'] as String?) ?? 'unknown';
+        return OnDeviceSttResult.fail(reason, engineName: engineName);
+      }
+      final text = (map['text'] as String?) ?? '';
+      // SFSpeech returns confidence in 0..1; we forward as-is and let the
+      // orchestrator apply its quality gate.
+      final confidence = (map['confidence'] as num?)?.toDouble() ?? 0.0;
+      return OnDeviceSttResult.ok(
+        text: text,
+        confidence: confidence,
+        engineName: engineName,
+      );
+    } on PlatformException catch (e) {
+      return OnDeviceSttResult.fail(
+        'platform_error:${e.code}',
+        engineName: engineName,
+      );
+    } catch (e) {
+      return OnDeviceSttResult.fail('unknown:$e', engineName: engineName);
+    }
   }
 }
 

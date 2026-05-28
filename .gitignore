@@ -53,3 +53,7 @@ mobile/secrets/
 mobile/android/key.properties
 *.jks
 *.keystore
+
+testsprite_tests/tmp/config.json
+
+backend/venv/

@@ -79,12 +79,16 @@ async def create_key(
             # Acquire row locks on the user's active API key rows; any
             # concurrent transaction trying the same insert blocks here
             # until ours commits/rolls back.
-            active_count = (
-                db.query(ApiKey)
+            # Postgres rejects FOR UPDATE on aggregate queries
+            # (psycopg2.errors.FeatureNotSupported), so fetch the locked
+            # rows and count in Python. Lock semantics are preserved.
+            active_rows = (
+                db.query(ApiKey.id)
                 .filter(ApiKey.user_id == user.id, ApiKey.is_active == True)
                 .with_for_update()
-                .count()
+                .all()
             )
+            active_count = len(active_rows)
             if allowed >= 0 and active_count >= allowed:
                 raise HTTPException(409, f"Max API keys reached for your plan ({allowed})")
 
