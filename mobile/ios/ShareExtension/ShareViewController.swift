@@ -32,21 +32,68 @@ fileprivate func diag(_ tag: String, _ message: String) {
 class ShareViewController: UIViewController {
 
   private var sheet: ResultSheetView!
+  private let dimView = UIView()
   private var savedAudioPath: String?          // copy inside App Group container
   private var detectedExtension: String = "m4a"
 
   override func viewDidLoad() {
     super.viewDidLoad()
     diag("life", "viewDidLoad")
-    // Dim background; the sheet itself animates up from the bottom.
-    view.backgroundColor = UIColor.black.withAlphaComponent(0.35)
+    // The extension's root view MUST be fully transparent so the host app
+    // (WhatsApp) shows through behind our sheet. The dimming is a SEPARATE
+    // layer (dimView) we fade in — that way the area outside the sheet sits
+    // over the live host UI instead of an opaque black extension window.
+    view.backgroundColor = .clear
+    view.isOpaque = false
     setupSheet()
     handleSharedAudio()
+  }
+
+  override func viewWillAppear(_ animated: Bool) {
+    super.viewWillAppear(animated)
+    // iOS hands a Share Extension an OPAQUE (black) host window by default;
+    // without clearing the whole chain, a .clear root view just reveals black.
+    makeWindowTransparent()
+  }
+
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    // The window only exists once we're attached; re-assert transparency after
+    // layout so a late-created host window can't reintroduce the black.
+    makeWindowTransparent()
+  }
+
+  private func makeWindowTransparent() {
+    var v: UIView? = view
+    while let cur = v {
+      cur.backgroundColor = .clear
+      cur.isOpaque = false
+      v = cur.superview
+    }
+    if let window = view.window {
+      window.backgroundColor = .clear
+      window.isOpaque = false
+    }
+    // Keep the dim layer's own tint — clearing the chain above must not wipe it.
+    dimView.isOpaque = false
   }
 
   // MARK: - Sheet
 
   private func setupSheet() {
+    // Dim layer — covers everything outside the sheet, fades in. Tapping it
+    // dismisses. Separate from the (transparent) root so the host app shows
+    // through at the configured alpha instead of solid black.
+    dimView.translatesAutoresizingMaskIntoConstraints = false
+    dimView.backgroundColor = UIColor.black.withAlphaComponent(0.0)
+    view.addSubview(dimView)
+    NSLayoutConstraint.activate([
+      dimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      dimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      dimView.topAnchor.constraint(equalTo: view.topAnchor),
+      dimView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+    ])
+
     sheet = ResultSheetView()
     sheet.translatesAutoresizingMaskIntoConstraints = false
     sheet.onClose = { [weak self] in self?.close() }
@@ -59,6 +106,12 @@ class ShareViewController: UIViewController {
       sheet.bottomAnchor.constraint(equalTo: view.bottomAnchor),
       sheet.topAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
     ])
+
+    // Fade the dim in so it reads as a layer over the live host app rather
+    // than a hard black cut.
+    UIView.animate(withDuration: 0.25) {
+      self.dimView.backgroundColor = UIColor.black.withAlphaComponent(0.35)
+    }
 
     // Tap outside to dismiss.
     let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped(_:)))
