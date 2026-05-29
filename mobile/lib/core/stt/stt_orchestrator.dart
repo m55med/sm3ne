@@ -11,6 +11,7 @@ import 'package:bisawtak/core/stt/on_device_stt.dart';
 import 'package:bisawtak/core/stt/on_device_stt_pref.dart';
 import 'package:bisawtak/data/models/transcription.dart';
 import 'package:bisawtak/data/repositories/transcription_repository.dart';
+import 'package:bisawtak/shared/utils/remote_logger.dart';
 
 /// Single entry point that picks between on-device STT and the server-side
 /// `/transcribe` pipeline. Callers (home screen, share handler) used to
@@ -54,12 +55,31 @@ class SttOrchestrator {
     void Function(int sent, int total)? onSendProgress,
     CancelToken? cancelToken,
   }) async {
-    if (Platform.isIOS && await _userEnabled) {
+    // Every branching decision logs to /diag/log so production runs are
+    // debuggable. Without this we have no way to tell why on-device falls
+    // back: no permission? no offline model? low confidence? failed log?
+    final userEnabled = await _userEnabled;
+    RemoteLogger.log(
+      'stt_orch',
+      'transcribeFile start ios=${Platform.isIOS} enabled=$userEnabled '
+          'source=$source locale=$uiLocale',
+    );
+
+    if (Platform.isIOS && userEnabled) {
       final localeId = resolveSpeechLocale(uiLocale);
       final result = await _onDevice.recognizeFile(
         filePath: filePath,
         localeId: localeId,
       );
+      RemoteLogger.log(
+        'stt_orch',
+        'on_device_result success=${result.success} '
+            'text_len=${result.text.trim().length} '
+            'confidence=${result.confidence.toStringAsFixed(3)} '
+            'engine=${result.engineName} '
+            'reason=${result.failureReason ?? "ok"}',
+      );
+
       if (result.success && result.text.trim().isNotEmpty) {
         // Use the same length/confidence gate the live path uses. Duration
         // isn't precisely known here (we'd have to probe the file with
@@ -67,6 +87,10 @@ class SttOrchestrator {
         // which is the right call for a transcribed result.
         final ok = (_onDevice as SpeechToTextOnDeviceStt)
             .meetsQualityBar(result.text, result.confidence, 0);
+        RemoteLogger.log(
+          'stt_orch',
+          'quality_bar passed=$ok',
+        );
         if (ok) {
           // Estimate duration from the text length when not provided —
           // mostly used for plan-quota stats. 3 words ~= 1 second of
@@ -74,7 +98,7 @@ class SttOrchestrator {
           final wordCount = result.text.trim().split(RegExp(r'\s+')).length;
           final estimatedSec = wordCount / 3.0;
           try {
-            return await _repo.logClientTranscription(
+            final tx = await _repo.logClientTranscription(
               text: result.text,
               lang: _shortLocale(uiLocale),
               langName: _localeName(uiLocale),
@@ -83,23 +107,26 @@ class SttOrchestrator {
               isLiveRecording: false,
               clientEngine: result.engineName,
             );
+            RemoteLogger.log(
+              'stt_orch',
+              'logged_to_backend ok words=$wordCount provider=client_side',
+            );
+            return tx;
           } catch (e) {
-            if (kDebugMode) {
-              debugPrint('client-side file log failed, falling back: $e');
-            }
+            RemoteLogger.log(
+              'stt_orch',
+              'client_log_failed err=$e — falling back to server upload',
+            );
             // fall through to server upload
           }
-        } else if (kDebugMode) {
-          debugPrint(
-            'on-device file STT below quality bar — falling back. '
-            'len=${result.text.length} conf=${result.confidence}',
-          );
         }
-      } else if (kDebugMode) {
-        debugPrint(
-          'on-device file STT failed reason=${result.failureReason}',
-        );
       }
+      RemoteLogger.log(
+        'stt_orch',
+        'falling_back_to_server reason=${result.success ? "low_quality_or_empty" : (result.failureReason ?? "unknown")}',
+      );
+    } else {
+      RemoteLogger.log('stt_orch', 'on_device_skipped (android or pref off)');
     }
     // Android or any iOS failure → existing server pipeline.
     return _repo.transcribeFile(

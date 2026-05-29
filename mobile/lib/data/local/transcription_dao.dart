@@ -19,11 +19,26 @@ class TranscriptionDao {
     }
     final db = await LocalDatabase.instance;
     final map = t.toMap()..['id'] = t.id;
-    return db.insert(
-      'transcriptions',
-      map,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    // ConflictAlgorithm.replace resolves a PRIMARY KEY (id) clash, but NOT the
+    // UNIQUE(server_request_id) index added in v3. If a background history-sync
+    // re-inserted a row with this server_request_id during the Undo window, a
+    // plain insert here would throw. Clear any colliding row first, in a single
+    // transaction, so Undo always restores the row with its original id.
+    return db.transaction((txn) async {
+      final sid = t.serverRequestId;
+      if (sid != null) {
+        await txn.delete(
+          'transcriptions',
+          where: 'server_request_id = ? AND id != ?',
+          whereArgs: [sid, t.id],
+        );
+      }
+      return txn.insert(
+        'transcriptions',
+        map,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
   }
 
   Future<List<Transcription>> getAll() async {
@@ -66,5 +81,49 @@ class TranscriptionDao {
     final db = await LocalDatabase.instance;
     final result = await db.rawQuery('SELECT COUNT(*) as count FROM transcriptions');
     return result.first['count'] as int;
+  }
+
+  /// Returns the set of `server_request_id` values already present locally.
+  /// Used by history-sync to skip rows the device already has (whether the
+  /// row was created on this device or restored on a previous sync), so a
+  /// restored metadata-only row never shadows a full local row that has the
+  /// real transcript text.
+  Future<Set<int>> existingServerRequestIds() async {
+    final db = await LocalDatabase.instance;
+    final maps = await db.query(
+      'transcriptions',
+      columns: ['server_request_id'],
+      where: 'server_request_id IS NOT NULL',
+    );
+    return maps
+        .map((m) => m['server_request_id'] as int?)
+        .whereType<int>()
+        .toSet();
+  }
+
+  /// Inserts history rows pulled from the server, skipping any whose
+  /// `server_request_id` already exists locally. Runs in a single transaction
+  /// and returns the number of rows actually inserted. Insert conflicts on the
+  /// unique `server_request_id` index are ignored as a belt-and-suspenders
+  /// guard against races with a concurrent live transcription.
+  Future<int> mergeHistory(List<Transcription> rows) async {
+    if (rows.isEmpty) return 0;
+    final db = await LocalDatabase.instance;
+    final existing = await existingServerRequestIds();
+    var inserted = 0;
+    await db.transaction((txn) async {
+      for (final t in rows) {
+        final sid = t.serverRequestId;
+        if (sid == null || existing.contains(sid)) continue;
+        await txn.insert(
+          'transcriptions',
+          t.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+        existing.add(sid);
+        inserted++;
+      }
+    });
+    return inserted;
   }
 }

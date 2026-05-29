@@ -10,6 +10,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:bisawtak/core/api/api_client.dart';
+import 'package:bisawtak/core/stt/on_device_stt.dart';
 import 'package:bisawtak/shared/utils/remote_logger.dart';
 
 /// Permission + token lifecycle for push notifications, plus a local
@@ -127,6 +128,21 @@ class NotificationService {
         'fcm_reg',
         'perm=${settings.authorizationStatus.name} granted=$granted simulator=$isSimulator',
       );
+
+      // Accessibility-first UX: chain the iOS Speech Recognition permission
+      // right after notifications. Our target users (people with hearing
+      // impairments) won't navigate Settings → On-device STT toggle on their
+      // own, so we surface both system dialogs back-to-back on first launch.
+      // Idempotent — Apple only shows the dialog the first time. Backgrounded
+      // because we don't need its result here; the on-device STT path will
+      // re-check status before each transcription attempt.
+      if (Platform.isIOS) {
+        unawaited(
+          SpeechToTextOnDeviceStt.requestPermission().then((status) {
+            RemoteLogger.log('stt_perm', 'chained_after_notif status=$status');
+          }),
+        );
+      }
 
       if (isSimulator) {
         // Synthetic token = "ios-sim-<device-uuid>" so it's stable across

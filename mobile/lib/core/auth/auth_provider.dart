@@ -8,6 +8,7 @@ import 'package:bisawtak/core/auth/token_storage.dart';
 import 'package:bisawtak/core/notifications/notification_service.dart';
 import 'package:bisawtak/data/local/transcription_dao.dart';
 import 'package:bisawtak/data/models/user.dart';
+import 'package:bisawtak/data/repositories/transcription_repository.dart';
 
 enum AuthStatus { initial, authenticated, unauthenticated, loading }
 
@@ -52,9 +53,36 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // Fire-and-forget: ask for push permission + register this device's
       // FCM token with the server. Idempotent, safe on every auth check.
       unawaited(_ref.read(notificationServiceProvider).registerIfAuthenticated());
+      // Fire-and-forget: rebuild "تسجيلاتي" from the server's request history.
+      // This is what brings back the user's request/event history after a
+      // delete-and-reinstall (the audio/text are never on the server, but the
+      // metadata is). Best-effort — never blocks the auth check. On success we
+      // bump historySyncSignalProvider so an open list screen refreshes.
+      unawaited(_syncHistory());
     } catch (_) {
       await _tokenStorage.clearAll();
       state = state.copyWith(status: AuthStatus.unauthenticated);
+    }
+  }
+
+  /// Best-effort history rebuild from the server. First flushes any on-device
+  /// transcriptions the iOS Share Extension queued while the app was closed
+  /// (so they get a real server request id), then pulls the full request
+  /// history and inserts only rows the device is missing. On any insert it
+  /// pulses [historySyncSignalProvider] so a mounted transcription list
+  /// refreshes itself.
+  Future<void> _syncHistory() async {
+    try {
+      final repo = _ref.read(transcriptionRepoProvider);
+      // Flush first so freshly logged share-extension rows are part of the
+      // history we then pull back down (and dedup against locally).
+      final flushed = await repo.flushPendingShareLogs();
+      final inserted = await repo.syncHistoryFromServer();
+      if (flushed > 0 || inserted > 0) {
+        _ref.read(historySyncSignalProvider.notifier).state++;
+      }
+    } catch (_) {
+      // Both calls already swallow + log; defensive guard only.
     }
   }
 

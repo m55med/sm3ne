@@ -1,19 +1,38 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/stt/stt_orchestrator.dart';
-import 'package:bisawtak/data/repositories/transcription_repository.dart';
 import 'package:bisawtak/data/models/transcription.dart';
+import 'package:bisawtak/features/plans/plans_screen.dart' show currentSubscriptionProvider;
 import 'package:bisawtak/shared/utils/error_messages.dart';
 import 'package:bisawtak/shared/utils/file_validation.dart';
 import 'package:bisawtak/shared/utils/sandbox_paths.dart';
 
+/// Floating result sheet shown when a voice note is shared into the app.
+///
+/// On Android (and the iOS "فتح في بصوتك" hand-off) the app launches with a
+/// translucent theme so this renders as a quick bottom sheet floating over the
+/// previous app — the user gets the transcript without the full app chrome.
+/// It mirrors the native iOS Share Extension sheet: accuracy/duration + word
+/// count chips, the text, copy, and an action row with the language (right)
+/// and "فتح في بصوتك" (left), plus the server request id.
 class ShareHandlerScreen extends ConsumerStatefulWidget {
   final String filePath;
   final String? sourceApp;
   final VoidCallback? onDone;
+  // Called when the user taps "فتح في بصوتك". The overlay can't navigate
+  // itself (it's outside the GoRouter), so it hands the target route up to
+  // main.dart which drives the router app.
+  final void Function(String route)? onOpenRoute;
 
-  const ShareHandlerScreen({super.key, required this.filePath, this.sourceApp, this.onDone});
+  const ShareHandlerScreen({
+    super.key,
+    required this.filePath,
+    this.sourceApp,
+    this.onDone,
+    this.onOpenRoute,
+  });
 
   @override
   ConsumerState<ShareHandlerScreen> createState() => _ShareHandlerScreenState();
@@ -33,10 +52,6 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
   @override
   void didUpdateWidget(covariant ShareHandlerScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Fallback for the case where Flutter reuses this widget instance
-    // because the parent didn't supply a Key on filePath (main.dart now
-    // does, but defending here keeps the screen correct regardless of how
-    // it's mounted in the future).
     if (oldWidget.filePath != widget.filePath) {
       setState(() {
         _result = null;
@@ -49,9 +64,8 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
 
   Future<void> _process() async {
     try {
-      // Defense-in-depth: even though routes.dart hardens the deep-link path,
-      // re-validate that the shared file lives inside the app sandbox and that
-      // it's a supported audio format/size before sending it to the server.
+      // Defense-in-depth: re-validate the shared file lives inside the sandbox
+      // and is a supported audio format/size before sending it anywhere.
       final insideSandbox = await isPathInsideSandbox(widget.filePath);
       if (!insideSandbox) {
         throw const TranscriptionUploadException(
@@ -61,18 +75,19 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
       }
       validateAudioFileForUpload(widget.filePath);
 
-      // Route through the orchestrator (not the repo directly) so the
-      // on-device path is attempted first on iOS. The orchestrator falls
-      // back to the server automatically if the recognizer can't handle
-      // the file (locale unsupported, audio too long, low confidence, …).
+      // Route through the orchestrator so the on-device path is attempted first
+      // on iOS; it falls back to the server automatically when needed.
       final uiLocale = Localizations.localeOf(context).languageCode;
       final result = await ref.read(sttOrchestratorProvider).transcribeFile(
-        widget.filePath,
-        source: 'shared',
-        sourceApp: widget.sourceApp,
-        uiLocale: uiLocale,
-      );
+            widget.filePath,
+            source: 'share',
+            sourceApp: widget.sourceApp,
+            uiLocale: uiLocale,
+          );
       if (!mounted) return;
+      // Bust the cached subscription so the plans screen reflects the new
+      // daily-used counter the next time it's opened.
+      ref.invalidate(currentSubscriptionProvider);
       setState(() {
         _result = result;
         _processing = false;
@@ -87,10 +102,13 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
   }
 
   Future<void> _copy() async {
+    if (_result == null) return;
     try {
       await Clipboard.setData(ClipboardData(text: _result!.text));
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم نسخ النص!')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم نسخ النص!')),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -104,111 +122,282 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
     }
   }
 
+  /// Opens the full result screen inside the app. Uses the local row id when we
+  /// have it (so the user lands on the rich detail screen with save/share);
+  /// otherwise falls back to the transcriptions list.
+  void _openInApp() {
+    final id = _result?.id;
+    final route = id != null ? '/transcription/$id' : '/transcriptions';
+    if (widget.onOpenRoute != null) {
+      widget.onOpenRoute!(route);
+    } else {
+      widget.onDone?.call();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Transparent scaffold so the sheet floats over whatever is behind it
+    // (the translucent launch theme on Android / the app on iOS).
     return Scaffold(
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: _processing
-              ? const Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 24),
-                      Text('جاري تحويل الصوت...', style: TextStyle(fontSize: 18)),
-                      SizedBox(height: 8),
-                      Text('بصوتك', style: TextStyle(color: Colors.grey)),
-                    ],
-                  ),
-                )
-              : _error != null
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.error_outline, size: 64, color: Theme.of(context).colorScheme.error),
-                          const SizedBox(height: 16),
-                          Text('فشل التحويل', style: Theme.of(context).textTheme.titleLarge),
-                          const SizedBox(height: 8),
-                          Text(
-                            _error!,
-                            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 24),
-                          ElevatedButton(onPressed: () => widget.onDone?.call(), child: const Text('إغلاق')),
-                        ],
-                      ),
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text('النتيجة', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-                            IconButton(onPressed: () => widget.onDone?.call(), icon: const Icon(Icons.close)),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          children: [
-                            Chip(label: Text(_result!.languageName)),
-                            Chip(label: Text('${_result!.duration.toStringAsFixed(1)}ث')),
-                            Chip(label: Text('${_result!.wordCount} كلمة')),
-                            if (!_result!.isClientSide && _result!.providerUsed != null)
-                              const Chip(
-                                avatar: Icon(Icons.cloud, size: 16),
-                                label: Text('عبر الخادم'),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        Expanded(
-                          child: Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: SingleChildScrollView(
-                              child: SelectableText(
-                                _result!.text,
-                                style: const TextStyle(fontSize: 18, height: 1.8),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                onPressed: _copy,
-                                icon: const Icon(Icons.copy),
-                                label: const Text('نسخ'),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: () => widget.onDone?.call(),
-                                icon: const Icon(Icons.check),
-                                label: const Text('تم'),
-                                style: OutlinedButton.styleFrom(
-                                  minimumSize: const Size(0, 52),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
+      backgroundColor: Colors.black.withValues(alpha: 0.35),
+      body: GestureDetector(
+        // Tap the dimmed backdrop to dismiss.
+        onTap: () => widget.onDone?.call(),
+        child: Align(
+          alignment: Alignment.bottomCenter,
+          child: GestureDetector(
+            onTap: () {}, // swallow taps on the sheet itself
+            child: _SheetBody(
+              processing: _processing,
+              error: _error,
+              result: _result,
+              onClose: () => widget.onDone?.call(),
+              onCopy: _copy,
+              onOpenInApp: _openInApp,
+            ),
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _SheetBody extends StatelessWidget {
+  final bool processing;
+  final String? error;
+  final Transcription? result;
+  final VoidCallback onClose;
+  final VoidCallback onCopy;
+  final VoidCallback onOpenInApp;
+
+  const _SheetBody({
+    required this.processing,
+    required this.error,
+    required this.result,
+    required this.onClose,
+    required this.onCopy,
+    required this.onOpenInApp,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.lg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Grabber.
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 5,
+                  margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+                  decoration: BoxDecoration(
+                    color: scheme.onSurfaceVariant.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              ),
+              // Header.
+              Row(
+                children: [
+                  Text(
+                    'بصوتك',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: scheme.primary,
+                        ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: onClose,
+                    icon: const Icon(Icons.close),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              if (processing)
+                _buildProcessing(context)
+              else if (error != null)
+                _buildError(context)
+              else if (result != null)
+                _buildResult(context, result!),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProcessing(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 32),
+      child: Column(
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 20),
+          Text('جاري تحويل الصوت...', style: TextStyle(fontSize: 16)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildError(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Column(
+        children: [
+          Icon(Icons.error_outline, size: 56, color: scheme.error),
+          const SizedBox(height: 12),
+          Text('فشل التحويل', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Text(
+            error!,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(onPressed: onClose, child: const Text('إغلاق')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResult(BuildContext context, Transcription t) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 1) Accuracy / duration + word count chips.
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.xs,
+          children: [
+            _Chip(icon: Icons.timer, label: _formatDuration(t.duration)),
+            _Chip(icon: Icons.text_fields, label: '${t.wordCount} كلمة'),
+            _Chip(
+              icon: t.isClientSide ? Icons.phone_iphone : Icons.cloud,
+              label: t.isClientSide ? 'داخل الجهاز' : 'عبر الخادم',
+              color: t.isClientSide ? Colors.green : scheme.primary,
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.md),
+        // 3) The transcript text itself, scrollable + selectable.
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 220),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(AppSpacing.md),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+            ),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                t.text.trim().isEmpty ? '—' : t.text,
+                style: const TextStyle(fontSize: 17, height: 1.7),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        // 2) Copy (full width).
+        SizedBox(
+          height: 48,
+          child: ElevatedButton.icon(
+            onPressed: onCopy,
+            icon: const Icon(Icons.copy),
+            label: const Text('نسخ'),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        // Action row: "فتح في بصوتك" on the leading (left) side, language on
+        // the trailing (right) side, per the product spec.
+        Row(
+          children: [
+            TextButton.icon(
+              onPressed: onOpenInApp,
+              icon: const Icon(Icons.open_in_new, size: 18),
+              label: const Text('فتح في بصوتك'),
+            ),
+            const Spacer(),
+            Icon(Icons.language, size: 16, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 4),
+            Text(
+              t.languageName,
+              style: TextStyle(
+                color: scheme.onSurfaceVariant,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        // Server request id.
+        const SizedBox(height: AppSpacing.xs),
+        Text(
+          t.serverRequestId != null
+              ? 'معرّف الطلب: #${t.serverRequestId}'
+              : 'سيظهر معرّف الطلب بعد المزامنة',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+        ),
+      ],
+    );
+  }
+
+  String _formatDuration(double seconds) {
+    if (seconds <= 0) return '—';
+    if (seconds < 60) return '${seconds.toStringAsFixed(0)} ثانية';
+    final m = seconds ~/ 60;
+    final s = (seconds % 60).round();
+    return '$m:${s.toString().padLeft(2, '0')} دقيقة';
+  }
+}
+
+class _Chip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color? color;
+  const _Chip({required this.icon, required this.label, this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = color ?? Theme.of(context).colorScheme.onSurfaceVariant;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: c),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(fontSize: 13, color: c, fontWeight: FontWeight.w500),
+          ),
+        ],
       ),
     );
   }

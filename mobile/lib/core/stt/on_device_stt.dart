@@ -9,6 +9,8 @@ import 'package:speech_to_text/speech_recognition_error.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
+import 'package:bisawtak/shared/utils/remote_logger.dart';
+
 /// Outcome of a live on-device STT session.
 ///
 /// `success` carries the recognized text. Anything else carries `reason` so
@@ -179,16 +181,21 @@ class SpeechToTextOnDeviceStt implements OnDeviceStt {
     );
   }
 
-  /// Tunable confidence threshold for iOS. Android often reports -1 so we
-  /// use a separate length-based heuristic in [_meetsQualityBar].
-  static const double _minIosConfidence = 0.55;
+  /// Tunable confidence threshold for iOS. SFSpeech sometimes reports 0 for
+  /// short utterances even when the text is correct — so we accept text with
+  /// confidence == 0 (treat as "unscored") and only reject below an explicit
+  /// low-confidence threshold. Empirically this catches the WhatsApp voice
+  /// message case where Apple returns good text but doesn't score it.
+  static const double _minIosConfidence = 0.30;
 
   bool _meetsQualityBar(String text, double confidence, double recordedSec) {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return false;
     if (Platform.isIOS) {
-      // Trust Apple's confidence. Below 0.55 we've consistently seen garbled
-      // output across noise/accent edge cases — better to pay for Whisper.
+      // Accept unscored results (confidence == 0): SFSpeech doesn't always
+      // emit a meaningful score, particularly for short Arabic utterances.
+      // Only reject when Apple did give us a score and it's below the floor.
+      if (confidence == 0) return true;
       return confidence >= _minIosConfidence;
     }
     // Android: confidence is unreliable. Use a sanity gate — at least 8
@@ -239,6 +246,63 @@ class SpeechToTextOnDeviceStt implements OnDeviceStt {
   /// `com.bisawtak/stt_file`. Android returns a `not_supported` failure
   /// without making a channel call (no native handler is registered).
   static const _fileChannel = MethodChannel('com.bisawtak/stt_file');
+
+  /// Triggers Apple's `SFSpeechRecognizer.requestAuthorization` so the system
+  /// permission dialog appears (if the user hasn't decided yet). Returns the
+  /// resulting status as a short string: `authorized`, `denied`, `restricted`,
+  /// `notDetermined`, or `not_applicable` on non-iOS.
+  ///
+  /// Safe to call repeatedly — Apple only shows the dialog the first time.
+  static Future<String> requestPermission() async {
+    if (!Platform.isIOS) return 'not_applicable';
+    try {
+      final r = await _fileChannel.invokeMethod<String>('requestPermission');
+      return r ?? 'unknown';
+    } catch (e) {
+      // Log to /diag/log so we can see when the native channel isn't
+      // wired up properly on real devices (e.g. MissingPluginException).
+      // Without this, the setting silently shows "unknown" forever.
+      RemoteLogger.log('stt_channel', 'requestPermission failed: $e');
+      if (kDebugMode) debugPrint('requestPermission failed: $e');
+      return 'unknown';
+    }
+  }
+
+  /// Reports current speech-recognizer capability for [localeId] WITHOUT
+  /// triggering a permission dialog. Returns a map with three booleans:
+  /// `auth_status` (string), `recognizer_available` (bool — does this device
+  /// have a recognizer for the locale at all), `supports_on_device` (bool —
+  /// is the offline language pack installed).
+  ///
+  /// The settings screen uses this to display a precise diagnostic when the
+  /// user enables the toggle — so they know whether to grant permission, or
+  /// install the language under iOS Settings → General → Keyboards → Dictation.
+  static Future<Map<String, dynamic>> probeAvailability({
+    String localeId = 'ar-EG',
+  }) async {
+    if (!Platform.isIOS) {
+      return const {
+        'auth_status': 'not_applicable',
+        'recognizer_available': false,
+        'supports_on_device': false,
+      };
+    }
+    try {
+      final raw = await _fileChannel
+          .invokeMethod<dynamic>('isAvailable', {'localeId': localeId});
+      if (raw is Map) {
+        return Map<String, dynamic>.from(raw);
+      }
+      return const {'auth_status': 'unknown', 'recognizer_available': false, 'supports_on_device': false};
+    } catch (e) {
+      // Most common cause: MissingPluginException because the native channel
+      // handler isn't registered. Surface to /diag/log so production failures
+      // are visible without a re-build.
+      RemoteLogger.log('stt_channel', 'probeAvailability failed: $e');
+      if (kDebugMode) debugPrint('probeAvailability failed: $e');
+      return const {'auth_status': 'unknown', 'recognizer_available': false, 'supports_on_device': false};
+    }
+  }
 
   @override
   Future<OnDeviceSttResult> recognizeFile({

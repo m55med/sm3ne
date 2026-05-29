@@ -3,8 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:io';
+
+import 'package:permission_handler/permission_handler.dart';
 import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/auth/auth_provider.dart';
+import 'package:bisawtak/core/stt/on_device_stt.dart';
 import 'package:bisawtak/core/stt/on_device_stt_pref.dart';
 import 'package:bisawtak/data/repositories/profile_repository.dart';
 import 'package:bisawtak/main.dart';
@@ -27,7 +31,6 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeModeProvider);
     final locale = ref.watch(localeProvider);
-    final onDeviceStt = ref.watch(onDeviceSttPrefProvider);
     final versionAsync = ref.watch(_appVersionProvider);
     final scheme = Theme.of(context).colorScheme;
     final chevron = Icon(forwardChevron(context));
@@ -56,16 +59,7 @@ class SettingsScreen extends ConsumerWidget {
           const Divider(height: 1),
           // On-device speech recognition — defaults to ON. Turning it off
           // routes every recording through the backend (uses daily quota).
-          SwitchListTile(
-            secondary: const Icon(Icons.phonelink_ring),
-            title: const Text('التعرّف على الصوت داخل الجهاز'),
-            subtitle: const Text(
-              'أسرع وأكثر خصوصية ولا يُخصم من باقتك. عند تعذّره يتم استخدام الخادم تلقائياً.',
-            ),
-            value: onDeviceStt,
-            onChanged: (v) =>
-                ref.read(onDeviceSttPrefProvider.notifier).setEnabled(v),
-          ),
+          const _OnDeviceSttTile(),
           const Divider(height: 1),
           // Change password
           ListTile(
@@ -324,6 +318,185 @@ class _LangOption extends ConsumerWidget {
         }
         if (context.mounted) Navigator.pop(context);
       },
+    );
+  }
+}
+
+/// Settings tile for the on-device STT toggle. Carries its own state because
+/// we need to (a) probe Apple's Speech framework for current capability and
+/// (b) request authorization when the user enables the switch — both async.
+class _OnDeviceSttTile extends ConsumerStatefulWidget {
+  const _OnDeviceSttTile();
+
+  @override
+  ConsumerState<_OnDeviceSttTile> createState() => _OnDeviceSttTileState();
+}
+
+class _OnDeviceSttTileState extends ConsumerState<_OnDeviceSttTile> {
+  Map<String, dynamic>? _probe;
+  bool _requesting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshProbe();
+  }
+
+  Future<void> _refreshProbe() async {
+    if (!Platform.isIOS) return;
+    final p = await SpeechToTextOnDeviceStt.probeAvailability();
+    if (!mounted) return;
+    setState(() => _probe = p);
+  }
+
+  Future<void> _onToggle(bool value) async {
+    // Persist the preference first so the orchestrator picks it up even if
+    // the permission request lags behind.
+    await ref.read(onDeviceSttPrefProvider.notifier).setEnabled(value);
+
+    if (!value || !Platform.isIOS) return;
+
+    // Re-probe before deciding what to do — the user may have changed
+    // permission state under the Settings app since last probe.
+    setState(() => _requesting = true);
+    final pre = await SpeechToTextOnDeviceStt.probeAvailability();
+    final auth = pre['auth_status'] as String? ?? 'unknown';
+
+    // Trigger Apple's authorization dialog for `notDetermined`. We also
+    // request on `unknown` as a defensive fallback: if the probe channel
+    // somehow doesn't respond, requestPermission still calls native
+    // `SFSpeechRecognizer.requestAuthorization` which is the source of truth
+    // and surfaces the system dialog if the user hasn't decided yet.
+    if (auth == 'notDetermined' || auth == 'unknown') {
+      await SpeechToTextOnDeviceStt.requestPermission();
+    } else if (auth == 'denied' || auth == 'restricted') {
+      // We can't re-prompt — Apple only shows the dialog once. Send the user
+      // to the system Settings page where they can re-enable it.
+      if (mounted) await _openSpeechSettings();
+    }
+
+    await _refreshProbe();
+    if (mounted) setState(() => _requesting = false);
+  }
+
+  Future<void> _openSpeechSettings() async {
+    final ok = await openAppSettings();
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذّر فتح الإعدادات تلقائياً، افتحها يدوياً.')),
+      );
+    }
+  }
+
+  String _arabicAuthLabel(String auth) {
+    switch (auth) {
+      case 'authorized':
+        return 'الصلاحية مفعّلة';
+      case 'denied':
+        return 'الصلاحية مرفوضة — افتح الإعدادات';
+      case 'restricted':
+        return 'الصلاحية مقيّدة بسياسات الجهاز';
+      case 'notDetermined':
+        return 'اضغط على المفتاح أعلاه لطلب الصلاحية';
+      case 'not_applicable':
+        return 'غير متاح على هذه المنصّة';
+      case 'unknown':
+        return 'تعذّر التواصل مع نظام التعرف — أعد فتح التطبيق';
+      default:
+        return 'حالة الصلاحية غير معروفة';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final onDeviceStt = ref.watch(onDeviceSttPrefProvider);
+    final scheme = Theme.of(context).colorScheme;
+
+    // The status row is only meaningful on iOS — Android falls back to the
+    // server pipeline regardless of this toggle, so we don't surface a
+    // "permission" line that would only confuse users.
+    Widget? status;
+    if (Platform.isIOS && onDeviceStt) {
+      final probe = _probe;
+      if (probe == null) {
+        status = const Padding(
+          padding: EdgeInsets.fromLTRB(72, 0, 16, 12),
+          child: Row(
+            children: [
+              SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+              SizedBox(width: 8),
+              Text('جاري التحقق من الإعدادات...', style: TextStyle(fontSize: 12)),
+            ],
+          ),
+        );
+      } else {
+        final auth = probe['auth_status'] as String? ?? 'unknown';
+        final supportsOnDevice = probe['supports_on_device'] == true;
+        final issues = <String>[];
+        if (auth != 'authorized') issues.add(_arabicAuthLabel(auth));
+        if (auth == 'authorized' && !supportsOnDevice) {
+          issues.add('اللغة العربية غير مثبتة للتعرف داخل الجهاز — '
+              'افتح الإعدادات > عام > لوحة المفاتيح > إملاء، وثبّت العربية.');
+        }
+        final allOk = auth == 'authorized' && supportsOnDevice;
+        status = Padding(
+          padding: const EdgeInsets.fromLTRB(72, 0, 16, 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                allOk ? Icons.check_circle : Icons.info_outline,
+                size: 16,
+                color: allOk ? Colors.green : scheme.error,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      allOk ? 'جاهز — التعرف داخل الجهاز مفعّل' : issues.join('\n'),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: allOk ? Colors.green : scheme.error,
+                      ),
+                    ),
+                    if (!allOk && (auth == 'denied' || auth == 'restricted')) ...[
+                      const SizedBox(height: 6),
+                      InkWell(
+                        onTap: _openSpeechSettings,
+                        child: Text(
+                          'افتح الإعدادات',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: scheme.primary,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+    }
+
+    return Column(
+      children: [
+        SwitchListTile(
+          secondary: const Icon(Icons.phonelink_ring),
+          title: const Text('التعرّف على الصوت داخل الجهاز'),
+          subtitle: const Text(
+            'أسرع وأكثر خصوصية ولا يُخصم من باقتك. عند تعذّره يتم استخدام الخادم تلقائياً.',
+          ),
+          value: onDeviceStt,
+          onChanged: _requesting ? null : _onToggle,
+        ),
+        if (status != null) status,
+      ],
     );
   }
 }

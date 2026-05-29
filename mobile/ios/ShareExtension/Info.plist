@@ -14,10 +14,17 @@
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<!-- Must track the host app exactly or App Store Connect rejects the
+	     bundle. Use the same Flutter-driven build variables as Runner. -->
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>$(FLUTTER_BUILD_NAME)</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<!-- The extension transcribes the shared voice note on-device via Apple
+	     Speech before any server fallback, so it needs its own speech-usage
+	     description (extensions don't inherit the host app's). -->
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>يستخدم بصوتك التعرّف على الصوت داخل الجهاز لتحويل الرسالة الصوتية المُشارَكة إلى نص بدون رفعها إلى الخادم.</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>

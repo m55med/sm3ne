@@ -30,12 +30,28 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-    // Register the on-device speech-file recognizer channel. Needs to run
-    // AFTER the plugin registrant so the messenger is alive. The channel
-    // sits separately from the `speech_to_text` plugin because that plugin
-    // only exposes mic input — file URLs need direct SFSpeechURLRecognition.
-    if let controller = window?.rootViewController as? FlutterViewController {
-      SpeechFileRecognizer.register(with: controller.binaryMessenger)
+    // Register the on-device speech-file recognizer channel via the plugin
+    // registry's binary messenger. We used to read `window?.rootViewController`
+    // here, but at the moment this callback fires the root VC is sometimes
+    // still nil — registration would silently no-op and the Dart side would
+    // see MissingPluginException on every probeAvailability/requestPermission
+    // call (surfaced as "حالة غير معروفة" in settings). Going through the
+    // plugin registrar gets us a guaranteed-valid binaryMessenger.
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "SpeechFileRecognizer") {
+      SpeechFileRecognizer.register(with: registrar.messenger())
+      BisawtakDiag.log(tag: "stt_channel", msg: "registered via plugin registrar")
+    } else {
+      BisawtakDiag.log(tag: "stt_channel", msg: "FAILED to obtain registrar — channel will not respond")
+    }
+
+    // App Group bridge — lets Flutter mirror the access token + API base URL
+    // into the shared container so the Share Extension can run a server
+    // fallback without launching the app.
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "AppGroupBridge") {
+      AppGroupBridgePlugin.register(with: registrar.messenger())
+      BisawtakDiag.log(tag: "appgroup_channel", msg: "registered")
+    } else {
+      BisawtakDiag.log(tag: "appgroup_channel", msg: "FAILED to obtain registrar")
     }
   }
 
@@ -136,6 +152,15 @@ private enum BisawtakDiag {
       switch call.method {
       case "isAvailable":
         SpeechFileRecognizer.shared.isAvailable(call, result: result)
+      case "requestPermission":
+        // Standalone permission request so the Dart side can prompt the
+        // user proactively from the settings screen (instead of waiting
+        // for the first transcribe attempt to trigger Apple's dialog).
+        SFSpeechRecognizer.requestAuthorization { status in
+          DispatchQueue.main.async {
+            result(Self.authStatusString(status))
+          }
+        }
       case "recognize":
         SpeechFileRecognizer.shared.recognize(call, result: result)
       case "cancel":

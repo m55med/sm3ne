@@ -2,16 +2,15 @@ import UIKit
 import Social
 import MobileCoreServices
 import UniformTypeIdentifiers
+import Speech
+import AVFoundation
 
-// TEMPORARY remote diag for the share extension. Helps us see, from the
-// device, whether the extension is firing and what UTI it's getting. Remove
-// once the share-intent bug is closed.
+// Remote diag mirror so we can watch the extension flow from a device.
 fileprivate func diag(_ tag: String, _ message: String) {
   NSLog("[DIAG \(tag)] \(message)")
-  var req = URLRequest(
-    url: URL(string: "https://voice.neojeen.com/api/v1/diag/log")!,
-    timeoutInterval: 4
-  )
+  let base = AppGroup.apiBaseUrl()
+  guard let url = URL(string: "\(base)/diag/log") else { return }
+  var req = URLRequest(url: url, timeoutInterval: 4)
   req.httpMethod = "POST"
   req.setValue("application/json", forHTTPHeaderField: "Content-Type")
   let payload: [String: String] = [
@@ -24,133 +23,300 @@ fileprivate func diag(_ tag: String, _ message: String) {
   }
 }
 
+/// The Share Extension's main controller. Instead of bouncing the user into
+/// the full app, it transcribes the shared voice note IN-PLACE and shows a
+/// floating result sheet. Engine order: Apple Speech on-device first (free,
+/// private, fast), then the server `/transcribe` fallback when on-device can't
+/// handle the file. A "فتح في بصوتك" button hands off to the full app for the
+/// rich result screen.
 class ShareViewController: UIViewController {
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        diag("life", "viewDidLoad")
-        handleSharedAudio()
+  private var sheet: ResultSheetView!
+  private var savedAudioPath: String?          // copy inside App Group container
+  private var detectedExtension: String = "m4a"
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    diag("life", "viewDidLoad")
+    // Dim background; the sheet itself animates up from the bottom.
+    view.backgroundColor = UIColor.black.withAlphaComponent(0.35)
+    setupSheet()
+    handleSharedAudio()
+  }
+
+  // MARK: - Sheet
+
+  private func setupSheet() {
+    sheet = ResultSheetView()
+    sheet.translatesAutoresizingMaskIntoConstraints = false
+    sheet.onClose = { [weak self] in self?.close() }
+    sheet.onCopy = { [weak self] text in self?.copyToClipboard(text) }
+    sheet.onOpenInApp = { [weak self] in self?.openInApp() }
+    view.addSubview(sheet)
+    NSLayoutConstraint.activate([
+      sheet.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      sheet.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      sheet.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+      sheet.topAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
+    ])
+
+    // Tap outside to dismiss.
+    let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped(_:)))
+    tap.cancelsTouchesInView = false
+    view.addGestureRecognizer(tap)
+  }
+
+  @objc private func backgroundTapped(_ g: UITapGestureRecognizer) {
+    let pt = g.location(in: view)
+    if !sheet.frame.contains(pt) { close() }
+  }
+
+  // MARK: - Input handling
+
+  private static let audioExtensions: Set<String> = [
+    "mp3", "m4a", "wav", "ogg", "flac", "aac", "wma", "opus",
+    "mp4", "webm", "3gp", "3gpp", "amr", "caf", "aiff",
+  ]
+
+  private func handleSharedAudio() {
+    guard let extensionItems = extensionContext?.inputItems as? [NSExtensionItem] else {
+      showError("لم يتم العثور على ملف صوتي."); return
     }
-
-    private func handleSharedAudio() {
-        guard let extensionItems = extensionContext?.inputItems as? [NSExtensionItem] else {
-            close()
-            return
+    for item in extensionItems {
+      guard let attachments = item.attachments else { continue }
+      for attachment in attachments {
+        if attachment.hasItemConformingToTypeIdentifier(UTType.audio.identifier) ||
+           attachment.hasItemConformingToTypeIdentifier("public.audio") ||
+           attachment.hasItemConformingToTypeIdentifier("com.apple.m4a-audio") ||
+           attachment.hasItemConformingToTypeIdentifier("public.mp3") ||
+           attachment.hasItemConformingToTypeIdentifier("public.mpeg-4-audio") ||
+           attachment.hasItemConformingToTypeIdentifier("org.xiph.ogg") ||
+           attachment.hasItemConformingToTypeIdentifier("org.xiph.opus") {
+          loadAttachment(attachment, typeId: UTType.audio.identifier)
+          return
         }
-
-        for item in extensionItems {
-            guard let attachments = item.attachments else { continue }
-            for attachment in attachments {
-                if attachment.hasItemConformingToTypeIdentifier(UTType.audio.identifier) ||
-                   attachment.hasItemConformingToTypeIdentifier("public.audio") ||
-                   attachment.hasItemConformingToTypeIdentifier("com.apple.m4a-audio") ||
-                   attachment.hasItemConformingToTypeIdentifier("public.mp3") ||
-                   attachment.hasItemConformingToTypeIdentifier("public.mpeg-4-audio") ||
-                   attachment.hasItemConformingToTypeIdentifier("org.xiph.ogg") ||
-                   attachment.hasItemConformingToTypeIdentifier("org.xiph.opus") {
-                    attachment.loadItem(forTypeIdentifier: UTType.audio.identifier, options: nil) { [weak self] (data, error) in
-                        guard error == nil else {
-                            self?.close()
-                            return
-                        }
-                        if let url = data as? URL {
-                            self?.saveAndRedirect(url: url)
-                        }
-                    }
-                    return
-                }
-                // Voice notes wrapped in a movie container (Messenger, iOS-recorded m4a/mp4).
-                if attachment.hasItemConformingToTypeIdentifier(UTType.movie.identifier) ||
-                   attachment.hasItemConformingToTypeIdentifier("public.mpeg-4") {
-                    attachment.loadItem(forTypeIdentifier: UTType.movie.identifier, options: nil) { [weak self] (data, error) in
-                        guard error == nil, let url = data as? URL else {
-                            self?.close()
-                            return
-                        }
-                        if Self.audioExtensions.contains(url.pathExtension.lowercased()) {
-                            self?.saveAndRedirect(url: url)
-                        } else {
-                            self?.close()
-                        }
-                    }
-                    return
-                }
-                // Generic file URL — pick it up if the extension is one we accept.
-                if attachment.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                    attachment.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { [weak self] (data, error) in
-                        guard error == nil, let url = data as? URL else {
-                            self?.close()
-                            return
-                        }
-                        if Self.audioExtensions.contains(url.pathExtension.lowercased()) {
-                            self?.saveAndRedirect(url: url)
-                        } else {
-                            self?.close()
-                        }
-                    }
-                    return
-                }
-            }
+        if attachment.hasItemConformingToTypeIdentifier(UTType.movie.identifier) ||
+           attachment.hasItemConformingToTypeIdentifier("public.mpeg-4") {
+          loadAttachment(attachment, typeId: UTType.movie.identifier)
+          return
         }
-        close()
+        if attachment.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+          loadAttachment(attachment, typeId: UTType.fileURL.identifier)
+          return
+        }
+      }
     }
+    showError("لم يتم العثور على ملف صوتي مدعوم.")
+  }
 
-    private static let audioExtensions: Set<String> = [
-        "mp3", "m4a", "wav", "ogg", "flac", "aac", "wma", "opus",
-        "mp4", "webm", "3gp", "3gpp",
-    ]
-
-    private func saveAndRedirect(url: URL) {
-        diag("save", "input url=\(url.lastPathComponent) ext=\(url.pathExtension)")
-        // Copy to shared App Group container
-        let groupID = "group.com.bisawtak.bisawtak"
-        guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID) else {
-            diag("save", "containerURL nil — App Group not accessible from extension!")
-            close()
-            return
-        }
-
-        let destURL = containerURL.appendingPathComponent("shared_audio_\(Int(Date().timeIntervalSince1970)).\(url.pathExtension)")
-
-        do {
-            if FileManager.default.fileExists(atPath: destURL.path) {
-                try FileManager.default.removeItem(at: destURL)
-            }
-            try FileManager.default.copyItem(at: url, to: destURL)
-            diag("save", "✓ copied to App Group: \(destURL.lastPathComponent)")
-
-            // Save path to UserDefaults for the main app to pick up
-            let userDefaults = UserDefaults(suiteName: groupID)
-            if userDefaults == nil {
-                diag("save", "UserDefaults(suiteName:) nil!")
-            }
-            userDefaults?.set(destURL.path, forKey: "shared_audio_path")
-            userDefaults?.synchronize()
-            diag("save", "✓ wrote shared_audio_path to App Group")
-
-            // Open main app
-            let urlScheme = URL(string: "bisawtak://shared")!
-            var responder: UIResponder? = self
-            var opened = false
-            while responder != nil {
-                if let application = responder as? UIApplication {
-                    application.open(urlScheme, options: [:], completionHandler: nil)
-                    opened = true
-                    break
-                }
-                responder = responder?.next
-            }
-            diag("save", "responder-open attempted opened=\(opened)")
-        } catch {
-            diag("save", "copy error: \(error.localizedDescription)")
-        }
-
-        close()
+  private func loadAttachment(_ attachment: NSItemProvider, typeId: String) {
+    attachment.loadItem(forTypeIdentifier: typeId, options: nil) { [weak self] (data, error) in
+      guard let self = self else { return }
+      if let error = error {
+        diag("load", "error: \(error.localizedDescription)")
+        self.showError("تعذّر قراءة الملف الصوتي.")
+        return
+      }
+      guard let url = data as? URL else {
+        self.showError("تنسيق المشاركة غير مدعوم.")
+        return
+      }
+      let ext = url.pathExtension.lowercased()
+      guard Self.audioExtensions.contains(ext) else {
+        diag("load", "unsupported ext=\(ext)")
+        self.showError("نوع الملف غير مدعوم.")
+        return
+      }
+      self.saveToAppGroup(url: url)
     }
+  }
 
-    private func close() {
+  /// Copies the shared file into the App Group container (so it survives after
+  /// `loadItem`'s temporary URL is reclaimed, and so "فتح في بصوتك" can hand it
+  /// to the app), then kicks off transcription.
+  private func saveToAppGroup(url: URL) {
+    guard let containerURL = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: AppGroup.id) else {
+      diag("save", "containerURL nil — App Group inaccessible")
+      showError("تعذّر الوصول إلى مساحة التخزين المشتركة."); return
+    }
+    detectedExtension = url.pathExtension.isEmpty ? "m4a" : url.pathExtension.lowercased()
+    let dest = containerURL.appendingPathComponent(
+      "shared_audio_\(Int(Date().timeIntervalSince1970)).\(detectedExtension)")
+    do {
+      if FileManager.default.fileExists(atPath: dest.path) {
+        try FileManager.default.removeItem(at: dest)
+      }
+      try FileManager.default.copyItem(at: url, to: dest)
+      savedAudioPath = dest.path
+      diag("save", "✓ copied \(dest.lastPathComponent)")
+      transcribe(fileURL: dest)
+    } catch {
+      diag("save", "copy error: \(error.localizedDescription)")
+      showError("تعذّر حفظ الملف الصوتي.")
+    }
+  }
+
+  // MARK: - Transcription pipeline
+
+  private func transcribe(fileURL: URL) {
+    DispatchQueue.main.async { self.sheet.showLoading() }
+    // Pick a recognizer locale from the device's preferred languages, biased
+    // to Arabic/English which cover the vast majority of our users.
+    let locale = Self.preferredLocale()
+    OnDeviceSTT.recognize(fileURL: fileURL, locale: locale) { [weak self] result in
+      guard let self = self else { return }
+      switch result {
+      case .success(let text, let confidence):
+        diag("stt", "on-device ✓ conf=\(confidence) chars=\(text.count)")
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          // Empty on-device result → try the server instead of showing nothing.
+          self.serverFallback(fileURL: fileURL)
+        } else {
+          let lang = locale.languageCode ?? "ar"
+          self.queueClientLog(text: text, lang: lang, fileURL: fileURL)
+          DispatchQueue.main.async {
+            self.sheet.showResult(
+              text: text,
+              langName: Self.langName(lang),
+              wordCount: Self.wordCount(text),
+              durationSeconds: Self.audioDuration(fileURL),
+              requestId: nil,         // on-device; request id arrives async (logged in app)
+              onDevice: true)
+          }
+        }
+      case .failure(let reason):
+        diag("stt", "on-device ✗ \(reason) → server fallback")
+        self.serverFallback(fileURL: fileURL)
+      }
+    }
+  }
+
+  private func serverFallback(fileURL: URL) {
+    guard let token = AppGroup.accessToken() else {
+      diag("server", "no token in App Group — cannot fall back")
+      DispatchQueue.main.async {
+        self.sheet.showResultUnavailable(
+          message: "تعذّر التحويل داخل الجهاز. افتح تطبيق بصوتك وسجّل الدخول لإكمال التحويل عبر الخادم.",
+          canOpenApp: true)
+      }
+      return
+    }
+    ServerTranscriber.transcribe(
+      fileURL: fileURL,
+      baseUrl: AppGroup.apiBaseUrl(),
+      token: token
+    ) { [weak self] result in
+      guard let self = self else { return }
+      switch result {
+      case .success(let resp):
+        diag("server", "✓ request_id=\(resp.requestId ?? -1)")
         DispatchQueue.main.async {
-            self.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
+          self.sheet.showResult(
+            text: resp.text,
+            langName: resp.langName ?? Self.langName(resp.lang ?? "ar"),
+            wordCount: resp.wordCount ?? Self.wordCount(resp.text),
+            durationSeconds: resp.duration ?? Self.audioDuration(fileURL),
+            requestId: resp.requestId,
+            onDevice: false)
         }
+      case .failure(let message):
+        diag("server", "✗ \(message)")
+        DispatchQueue.main.async {
+          self.sheet.showResultUnavailable(
+            message: message, canOpenApp: true)
+        }
+      }
     }
+  }
+
+  /// On-device transcriptions can't reliably reach `/transcriptions/log` from
+  /// the extension (the access token may be expired and we can't refresh it
+  /// here). Queue the metadata in the App Group; the app flushes the queue on
+  /// next launch so history + admin stay complete.
+  private func queueClientLog(text: String, lang: String, fileURL: URL) {
+    guard let defaults = AppGroup.defaults else { return }
+    var queue = defaults.array(forKey: AppGroup.pendingClientLogsKey) as? [[String: Any]] ?? []
+    queue.append([
+      "text": String(text.prefix(50_000)),
+      "lang": lang,
+      "duration_seconds": Self.audioDuration(fileURL),
+      "source": "share",
+      "is_live_recording": false,
+      "client_engine": "apple_speech",
+    ])
+    // Cap the queue so a long offline streak can't grow it unbounded.
+    if queue.count > 100 { queue = Array(queue.suffix(100)) }
+    defaults.set(queue, forKey: AppGroup.pendingClientLogsKey)
+    defaults.synchronize()
+  }
+
+  // MARK: - Actions
+
+  private func copyToClipboard(_ text: String) {
+    UIPasteboard.general.string = text
+    sheet.flashCopied()
+  }
+
+  /// Hands the shared file + a deep link to the full app so the user gets the
+  /// rich result screen (save, re-share, etc.). Writes the path to the App
+  /// Group hand-off slot the SceneDelegate already drains.
+  private func openInApp() {
+    if let path = savedAudioPath {
+      AppGroup.defaults?.set(path, forKey: AppGroup.sharedAudioPathKey)
+      AppGroup.defaults?.synchronize()
+    }
+    let urlScheme = URL(string: "bisawtak://shared")!
+    var responder: UIResponder? = self
+    while responder != nil {
+      if let application = responder as? UIApplication {
+        application.open(urlScheme, options: [:], completionHandler: nil)
+        break
+      }
+      responder = responder?.next
+    }
+    close()
+  }
+
+  private func showError(_ message: String) {
+    DispatchQueue.main.async {
+      self.sheet.showResultUnavailable(message: message, canOpenApp: false)
+    }
+  }
+
+  private func close() {
+    DispatchQueue.main.async {
+      self.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
+    }
+  }
+
+  // MARK: - Helpers
+
+  private static func preferredLocale() -> Locale {
+    for lang in Locale.preferredLanguages {
+      let code = lang.lowercased()
+      if code.hasPrefix("ar") { return Locale(identifier: "ar-SA") }
+      if code.hasPrefix("en") { return Locale(identifier: "en-US") }
+    }
+    return Locale(identifier: "ar-SA")
+  }
+
+  private static func langName(_ code: String) -> String {
+    let c = code.lowercased()
+    if c.hasPrefix("ar") { return "العربية" }
+    if c.hasPrefix("en") { return "English" }
+    if c.hasPrefix("fr") { return "Français" }
+    return code
+  }
+
+  private static func wordCount(_ text: String) -> Int {
+    let parts = text.split { $0 == " " || $0 == "\n" || $0 == "\t" }
+    return parts.count
+  }
+
+  private static func audioDuration(_ url: URL) -> Double {
+    let asset = AVURLAsset(url: url)
+    let d = CMTimeGetSeconds(asset.duration)
+    return d.isFinite && d > 0 ? d : 0
+  }
 }

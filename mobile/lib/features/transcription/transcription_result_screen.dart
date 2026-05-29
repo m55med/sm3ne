@@ -68,6 +68,11 @@ class TranscriptionResultScreen extends ConsumerWidget {
                     _StatChip(icon: Icons.timer, label: '${t.duration.toStringAsFixed(1)}ث'),
                     _StatChip(icon: Icons.text_fields, label: '${t.wordCount} كلمة'),
                     _StatChip(icon: Icons.abc, label: '${t.charCount} حرف'),
+                    // Provenance: surfaces whether this row used the on-device
+                    // recognizer (free, instant) or the server pipeline, and
+                    // shows the server's request_id when present. Both help
+                    // admins reproduce/trace a specific transcription.
+                    _ProviderChip(transcription: t),
                   ],
                 ),
                 if (t.wasTrimmed)
@@ -96,47 +101,79 @@ class TranscriptionResultScreen extends ConsumerWidget {
                       ),
                 ),
                 const SizedBox(height: AppSpacing.sm),
-                Hero(
-                  tag: 'transcription-text-${t.id ?? transcriptionId}',
-                  child: Material(
-                    color: Colors.transparent,
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(AppSpacing.lg),
-                      decoration: BoxDecoration(
-                        color: scheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                      ),
-                      child: SelectableText(
-                        t.text,
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                              fontSize: 18,
-                              height: 1.8,
-                            ),
+                // Restored history rows have no transcript text — the server
+                // only kept the request metadata, never the audio or the
+                // words. Show an explanatory card and hide copy/share rather
+                // than presenting an empty, copyable box.
+                if (t.isRestored && t.text.trim().isEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(AppSpacing.lg),
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.history, color: scheme.onSurfaceVariant),
+                        const SizedBox(width: AppSpacing.md),
+                        Expanded(
+                          child: Text(
+                            'هذا السجل مُستعاد من خادمنا. لا نحتفظ بنص التفريغ '
+                            'أو الصوت على الخادم حفاظاً على خصوصيتك، لذلك يظهر '
+                            'الطلب هنا بتفاصيله دون النص.',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                  height: 1.6,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else ...[
+                  Hero(
+                    tag: 'transcription-text-${t.id ?? transcriptionId}',
+                    child: Material(
+                      color: Colors.transparent,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(AppSpacing.lg),
+                        decoration: BoxDecoration(
+                          color: scheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(AppRadius.md),
+                        ),
+                        child: SelectableText(
+                          t.text,
+                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                fontSize: 18,
+                                height: 1.8,
+                              ),
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: AppSpacing.xl),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: () => _copy(context, t.text),
-                        icon: const Icon(Icons.copy),
-                        label: const Text('نسخ'),
+                  const SizedBox(height: AppSpacing.xl),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () => _copy(context, t.text),
+                          icon: const Icon(Icons.copy),
+                          label: const Text('نسخ'),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: AppSpacing.md),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => _share(t.text),
-                        icon: const Icon(Icons.share),
-                        label: const Text('مشاركة'),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => _share(t.text),
+                          icon: const Icon(Icons.share),
+                          label: const Text('مشاركة'),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
@@ -239,6 +276,36 @@ class _StatChip extends StatelessWidget {
     return Chip(
       avatar: Icon(icon, size: 16),
       label: Text(label, style: const TextStyle(fontSize: 13)),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+}
+
+class _ProviderChip extends StatelessWidget {
+  final Transcription transcription;
+  const _ProviderChip({required this.transcription});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isOnDevice = transcription.isClientSide;
+    final reqId = transcription.serverRequestId;
+    final label = isOnDevice
+        ? (reqId != null ? 'داخل الجهاز • #$reqId' : 'داخل الجهاز')
+        : (reqId != null ? 'عبر الخادم • #$reqId' : 'عبر الخادم');
+    final color = isOnDevice ? Colors.green : scheme.primary;
+    return Chip(
+      avatar: Icon(
+        isOnDevice ? Icons.phone_iphone : Icons.cloud,
+        size: 16,
+        color: color,
+      ),
+      label: Text(
+        label,
+        style: TextStyle(fontSize: 13, color: color, fontWeight: FontWeight.w500),
+      ),
+      side: BorderSide(color: color.withValues(alpha: 0.4)),
+      backgroundColor: color.withValues(alpha: 0.08),
       visualDensity: VisualDensity.compact,
     );
   }

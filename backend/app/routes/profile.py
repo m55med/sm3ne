@@ -63,6 +63,14 @@ async def update_profile(
     if body.full_name is not None:
         user.full_name = body.full_name
     if body.email is not None:
+        # Social accounts: the email is owned by the identity provider
+        # (Apple/Google/etc) and changing it locally would diverge from
+        # the IdP, breaking future logins. Mirror the change_password rule.
+        if user.auth_provider != "local":
+            raise HTTPException(
+                400,
+                "Email is managed by your sign-in provider and cannot be changed here.",
+            )
         existing = db.query(User).filter(User.email == body.email, User.id != user.id).first()
         if existing:
             raise HTTPException(409, "Email already in use")
@@ -300,7 +308,7 @@ async def my_transcriptions(
     request can't fan out into an unbounded JSON serialization.
     """
     q = db.query(TranscriptionRequest).filter(TranscriptionRequest.user_id == user.id)
-    total = q.scalar() if False else q.count()  # explicit for clarity
+    total = q.count()
     rows = (
         q.order_by(TranscriptionRequest.created_at.desc())
         .offset((page - 1) * per_page)
@@ -319,6 +327,12 @@ async def my_transcriptions(
             "status": r.status,
             "source": r.source,
             "is_live_recording": r.is_live_recording,
+            # provider_used + model_used let the mobile app rebuild its local
+            # history after a reinstall and still show the right "on-device vs
+            # server" provenance chip. We deliberately do NOT return any
+            # transcript text — the server never stores it (privacy).
+            "provider_used": r.provider_used,
+            "model_used": r.model_used,
             "created_at": r.created_at,
         }
         for r in rows

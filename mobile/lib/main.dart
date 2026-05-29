@@ -49,6 +49,12 @@ class SharedFileNotifier extends Notifier<String?> {
 final sharedFileProvider =
     NotifierProvider<SharedFileNotifier, String?>(SharedFileNotifier.new);
 
+/// Set when the user taps "فتح في بصوتك" on the share sheet. The share overlay
+/// lives in a plain MaterialApp (no GoRouter), so it can't navigate directly.
+/// Instead it stashes the target route here and dismisses; the root widget
+/// then drives the MaterialApp.router to that route once it rebuilds.
+final pendingShareRouteProvider = StateProvider<String?>((ref) => null);
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -189,8 +195,23 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
           key: ValueKey(sharedFile),
           filePath: sharedFile,
           onDone: () => ref.read(sharedFileProvider.notifier).dismiss(),
+          onOpenRoute: (route) {
+            ref.read(pendingShareRouteProvider.notifier).state = route;
+            ref.read(sharedFileProvider.notifier).dismiss();
+          },
         ),
       );
+    }
+
+    // Drain a pending "فتح في بصوتك" navigation once the router app is back.
+    final pendingRoute = ref.watch(pendingShareRouteProvider);
+    if (pendingRoute != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (ref.read(pendingShareRouteProvider) == pendingRoute) {
+          ref.read(pendingShareRouteProvider.notifier).state = null;
+          router.go(pendingRoute);
+        }
+      });
     }
 
     return MaterialApp.router(

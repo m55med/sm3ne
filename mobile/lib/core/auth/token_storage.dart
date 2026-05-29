@@ -2,6 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:bisawtak/core/services/app_group_bridge.dart';
+
 final tokenStorageProvider = Provider<TokenStorage>((ref) => TokenStorage());
 
 class TokenStorage {
@@ -26,6 +28,9 @@ class TokenStorage {
   // --- access token ---
   Future<void> saveToken(String token) async {
     await _storage.write(key: _accessTokenKey, value: token);
+    // Mirror into the iOS App Group so the Share Extension can authenticate a
+    // server fallback without launching the app. No-op on Android.
+    await AppGroupBridge.syncAuth(token);
   }
 
   Future<String?> getToken() async {
@@ -34,6 +39,7 @@ class TokenStorage {
 
   Future<void> clearToken() async {
     await _storage.delete(key: _accessTokenKey);
+    await AppGroupBridge.clearAuth();
   }
 
   // --- refresh token ---
@@ -55,6 +61,9 @@ class TokenStorage {
       _storage.delete(key: _accessTokenKey),
       _storage.delete(key: _refreshTokenKey),
     ]);
+    // Also wipe the App Group mirror so a signed-out device can't transcribe
+    // from the Share Extension as the previous user.
+    await AppGroupBridge.clearAuth();
   }
 
   // --- first-launch (SharedPreferences) ---

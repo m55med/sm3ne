@@ -3,11 +3,21 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 ClientEngine = Literal["apple_speech", "android_speech"]
 ClientSource = Literal["recording", "upload", "share"]
+
+# Mobile sometimes ships small naming drifts (e.g. an old build sent "shared"
+# instead of "share", and "recorded" instead of "recording"). Rather than
+# 422-ing those silently and dropping the on-device transcription on the
+# floor, normalize to the canonical literal so the row still lands.
+_SOURCE_ALIASES = {
+    "shared": "share",
+    "recorded": "recording",
+    "uploaded": "upload",
+}
 
 
 class ClientLogIn(BaseModel):
@@ -26,3 +36,10 @@ class ClientLogIn(BaseModel):
     source: ClientSource
     is_live_recording: bool
     client_engine: ClientEngine
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _normalize_source(cls, v):
+        if isinstance(v, str):
+            return _SOURCE_ALIASES.get(v, v)
+        return v

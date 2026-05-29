@@ -49,6 +49,10 @@ class _TranscriptionListScreenState extends ConsumerState<TranscriptionListScree
   }
 
   Future<void> _refresh() async {
+    // Pull-to-refresh also re-syncs the server-side request history so the
+    // user can manually recover their event history (e.g. right after a
+    // reinstall) without waiting for the post-login background sync.
+    await ref.read(transcriptionRepoProvider).syncHistoryFromServer();
     ref.invalidate(transcriptionsProvider);
     if (_searchCtrl.text.trim().isNotEmpty) {
       setState(() {
@@ -61,6 +65,12 @@ class _TranscriptionListScreenState extends ConsumerState<TranscriptionListScree
   @override
   Widget build(BuildContext context) {
     final transcriptions = ref.watch(transcriptionsProvider);
+
+    // When a background history-sync inserts new rows it pulses this signal;
+    // invalidate our cached list so the restored history shows immediately.
+    ref.listen<int>(historySyncSignalProvider, (_, __) {
+      ref.invalidate(transcriptionsProvider);
+    });
 
     return Scaffold(
       appBar: AppBar(title: const Text('تسجيلاتي')),
@@ -186,12 +196,25 @@ class _TranscriptionTile extends StatelessWidget {
           flightShuttleBuilder: _flightShuttle,
           child: Material(
             color: Colors.transparent,
-            child: Text(
-              t.text,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
+            // Restored rows carry no transcript text (the server never stored
+            // it). Show a muted, italic placeholder describing the event
+            // instead of a blank line so the history still reads clearly.
+            child: t.isRestored && t.text.trim().isEmpty
+                ? Text(
+                    '${_sourceLabel(t.source)} • ${t.wordCount} كلمة',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontStyle: FontStyle.italic,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                  )
+                : Text(
+                    t.text,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
           ),
         ),
         subtitle: Padding(
@@ -210,6 +233,27 @@ class _TranscriptionTile extends StatelessWidget {
               Text(
                 _sourceLabel(t.source),
                 style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              // Provenance + server request id, so admins (and curious users)
+              // can verify on-device transcriptions made it to the backend.
+              // On-device rows get a green phone icon; server-backed rows get
+              // a cloud icon in the primary tint.
+              Icon(
+                t.isClientSide ? Icons.phone_iphone : Icons.cloud,
+                size: 14,
+                color: t.isClientSide ? Colors.green : scheme.primary,
+              ),
+              const SizedBox(width: 2),
+              Text(
+                t.serverRequestId != null
+                    ? '#${t.serverRequestId}'
+                    : (t.isClientSide ? 'محلي' : 'خادم'),
+                style: TextStyle(
+                  color: t.isClientSide ? Colors.green : scheme.primary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
               const Spacer(),
               Text(

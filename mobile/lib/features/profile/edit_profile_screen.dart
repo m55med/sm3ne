@@ -45,10 +45,17 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
       _success = null;
     });
     try {
-      await ref.read(apiClientProvider).dio.put('/profile', data: {
+      // Email is owned by the sign-in provider for social accounts (Apple/Google/etc).
+      // Only locally-registered users may change it from here.
+      final user = ref.read(authProvider).user;
+      final isLocal = user?.authProvider == 'local';
+      final payload = <String, dynamic>{
         'full_name': _nameCtrl.text.trim().isEmpty ? null : _nameCtrl.text.trim(),
-        'email': _emailCtrl.text.trim().isEmpty ? null : _emailCtrl.text.trim(),
-      });
+      };
+      if (isLocal) {
+        payload['email'] = _emailCtrl.text.trim().isEmpty ? null : _emailCtrl.text.trim();
+      }
+      await ref.read(apiClientProvider).dio.put('/profile', data: payload);
       await ref.read(authProvider.notifier).checkAuth();
       if (!mounted) return;
       setState(() => _success = 'تم حفظ التعديلات');
@@ -65,6 +72,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(authProvider).user;
+    final isLocal = user?.authProvider == 'local';
     return Scaffold(
       appBar: AppBar(
         title: const Text('تعديل البروفايل'),
@@ -109,21 +117,34 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 textInputAction: TextInputAction.next,
               ),
               const SizedBox(height: 12),
-              TextFormField(
-                controller: _emailCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'البريد الإلكتروني',
-                  prefixIcon: Icon(Icons.mail_outline),
-                ),
-                keyboardType: TextInputType.emailAddress,
-                validator: (v) {
-                  if (v == null || v.trim().isEmpty) return null;
-                  final re = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-                  return re.hasMatch(v.trim()) ? null : 'بريد إلكتروني غير صحيح';
-                },
-              ),
+              if (isLocal)
+                TextFormField(
+                  controller: _emailCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'البريد الإلكتروني',
+                    prefixIcon: Icon(Icons.mail_outline),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return null;
+                    final re = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+                    return re.hasMatch(v.trim()) ? null : 'بريد إلكتروني غير صحيح';
+                  },
+                )
+              else
+                _ReadOnlyRow(label: 'البريد الإلكتروني', value: user?.email ?? '—'),
               const SizedBox(height: 12),
               _ReadOnlyRow(label: 'تسجيل الدخول عبر', value: _providerLabel(user?.authProvider)),
+              if (!isLocal) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'البريد الإلكتروني مُدار بواسطة ${_providerLabel(user?.authProvider)} ولا يمكن تعديله من هنا.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 12),
                 _Banner(text: _error!, color: Theme.of(context).colorScheme.error),

@@ -13,8 +13,8 @@ import 'package:share_plus/share_plus.dart';
 import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/analytics/analytics_service.dart';
 import 'package:bisawtak/core/stt/stt_orchestrator.dart';
-import 'package:bisawtak/data/repositories/transcription_repository.dart';
 import 'package:bisawtak/data/models/transcription.dart';
+import 'package:bisawtak/features/plans/plans_screen.dart' show currentSubscriptionProvider;
 import 'package:bisawtak/main.dart' show localeProvider;
 import 'package:bisawtak/shared/utils/error_messages.dart';
 import 'package:bisawtak/shared/utils/haptics.dart';
@@ -390,6 +390,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         durationSeconds: transcription.duration.round(),
         wordCount: transcription.wordCount,
       );
+      // Bust the cached subscription so the plans screen reflects the new
+      // daily-used counter immediately the next time the user opens it.
+      // Without this, the counter only refreshes on pull-to-refresh.
+      ref.invalidate(currentSubscriptionProvider);
       if (mounted) {
         Haptics.success();
         _showResult(transcription);
