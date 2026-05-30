@@ -5,8 +5,17 @@ import { api } from "@/lib/api";
 import { getCurrentAdminId } from "@/lib/auth";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { RefreshButton } from "@/components/refresh-button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { toast } from "@/components/toast";
@@ -31,6 +40,22 @@ function surveyReasons(raw: string | null): string[] {
 
 const PER_PAGE = 20;
 
+interface CreateForm {
+  email: string;
+  password: string;
+  full_name: string;
+  role: "user" | "admin";
+  is_active: boolean;
+}
+
+const EMPTY_CREATE_FORM: CreateForm = {
+  email: "",
+  password: "",
+  full_name: "",
+  role: "user",
+  is_active: true,
+};
+
 export default function UsersPage() {
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -41,6 +66,12 @@ export default function UsersPage() {
 
   const [confirmTarget, setConfirmTarget] = useState<UserListItem | null>(null);
   const [mutatingId, setMutatingId] = useState<number | null>(null);
+
+  // إنشاء مستخدم جديد
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState<CreateForm>(EMPTY_CREATE_FORM);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
     const params = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) });
@@ -71,6 +102,49 @@ export default function UsersPage() {
     }
   }
 
+  function openCreate() {
+    setCreateForm(EMPTY_CREATE_FORM);
+    setCreateError(null);
+    setCreateOpen(true);
+  }
+
+  async function createUser() {
+    const email = createForm.email.trim().toLowerCase();
+    // التحقق من المدخلات قبل إرسال الطلب — مطابق لقيود الـ backend.
+    if (!email || !email.includes("@")) {
+      setCreateError("أدخل بريداً إلكترونياً صحيحاً.");
+      return;
+    }
+    if (createForm.password.length < 8) {
+      setCreateError("كلمة المرور يجب أن تكون 8 أحرف على الأقل.");
+      return;
+    }
+    setCreateError(null);
+    setCreating(true);
+    try {
+      await api("/admin/users", {
+        method: "POST",
+        body: JSON.stringify({
+          email,
+          password: createForm.password,
+          full_name: createForm.full_name.trim() || null,
+          role: createForm.role,
+          is_active: createForm.is_active,
+        }),
+      });
+      toast.success(`تم إنشاء حساب ${createForm.full_name.trim() || email}`);
+      setCreateOpen(false);
+      setPage(1);
+      await load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "فشل إنشاء المستخدم";
+      setCreateError(msg);
+      toast.error(msg);
+    } finally {
+      setCreating(false);
+    }
+  }
+
   const totalPages = Math.ceil(total / PER_PAGE) || 1;
   const showPagination = total > PER_PAGE;
   const isEmpty = !debouncedSearch && total === 0;
@@ -79,7 +153,10 @@ export default function UsersPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">المستخدمين</h1>
-        <RefreshButton onRefresh={load} />
+        <div className="flex items-center gap-2">
+          <Button onClick={openCreate}>+ مستخدم جديد</Button>
+          <RefreshButton onRefresh={load} />
+        </div>
       </div>
       <Card className="p-6">
         <div className="flex items-center gap-4 mb-6">
@@ -216,6 +293,84 @@ export default function UsersPage() {
         destructive
         onConfirm={performDelete}
       />
+
+      <Dialog open={createOpen} onOpenChange={(open) => { if (!creating) setCreateOpen(open); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>مستخدم جديد</DialogTitle>
+            <DialogDescription>
+              إنشاء حساب بالبريد وكلمة المرور. يبدأ على الباقة المجانية.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-2">
+            <div>
+              <Label htmlFor="new-user-email" className="text-xs">البريد الإلكتروني</Label>
+              <Input
+                id="new-user-email"
+                name="email"
+                type="email"
+                dir="ltr"
+                value={createForm.email}
+                onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
+                placeholder="user@example.com"
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label htmlFor="new-user-password" className="text-xs">كلمة المرور (8 أحرف على الأقل)</Label>
+              <Input
+                id="new-user-password"
+                name="password"
+                type="password"
+                dir="ltr"
+                value={createForm.password}
+                onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label htmlFor="new-user-name" className="text-xs">الاسم (اختياري)</Label>
+              <Input
+                id="new-user-name"
+                name="full_name"
+                value={createForm.full_name}
+                onChange={(e) => setCreateForm({ ...createForm, full_name: e.target.value })}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label htmlFor="new-user-role" className="text-xs">الدور</Label>
+              <select
+                id="new-user-role"
+                name="role"
+                className="mt-1 w-full h-9 rounded-lg border border-input bg-transparent px-2.5 text-sm"
+                value={createForm.role}
+                onChange={(e) => setCreateForm({ ...createForm, role: e.target.value as CreateForm["role"] })}
+              >
+                <option value="user">مستخدم</option>
+                <option value="admin">مشرف</option>
+              </select>
+            </div>
+            <label className="flex items-center gap-2 text-sm" htmlFor="new-user-active">
+              <input
+                id="new-user-active"
+                name="is_active"
+                type="checkbox"
+                checked={createForm.is_active}
+                onChange={(e) => setCreateForm({ ...createForm, is_active: e.target.checked })}
+              />
+              نشط
+            </label>
+            {createError && <div className="text-red-600 text-sm">{createError}</div>}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>إلغاء</Button>
+            <Button onClick={createUser} disabled={creating}>{creating ? "جاري الإنشاء..." : "إنشاء"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -17,6 +17,7 @@ from app.db.models import ApiKey, AppSetting, Coupon, Device, LoginEvent, Plan, 
 from app.auth.jwt import get_current_admin
 from app.schemas.admin import (
     AdminStatsResponse, UserListResponse, UserListItem, UserUpdateRequest,
+    AdminUserCreateRequest,
     RequestListResponse, RequestListItem,
     CouponCreate, CouponResponse, CouponUpdate,
     PlanAdminItem, PlanCreate, PlanUpdate,
@@ -30,6 +31,7 @@ from app.schemas.support import (
     TicketDetail, TicketReplyItem, TicketReplyCreate, TicketStatusUpdate,
 )
 from app.core.lifespan import generate_public_id
+from app.auth.password import hash_password
 from app.schemas.api_keys import (
     AdminApiKeyCreateRequest, AdminApiKeyListItem, AdminApiKeyListResponse,
     ApiKeyCreateResponse, ApiKeyResponse, ApiKeyUpdateRequest,
@@ -331,6 +333,41 @@ async def get_user(
         usage=usage,
         active_sessions=active_sessions,
     )
+
+
+@router.post("/users", response_model=UserDetailResponse, status_code=201)
+async def admin_create_user(
+    body: AdminUserCreateRequest,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Create a local user account from the admin panel. Mirrors the public
+    /auth/register fields (email + password + name) but is admin-only and can
+    set role / active state directly. Returns the full detail view so the panel
+    shows the resolved subscription + usage immediately after creation."""
+    email = body.email.lower().strip()
+    # Email is the canonical identifier — reject duplicates case-insensitively.
+    existing = db.query(User).filter(func.lower(User.email) == email).first()
+    if existing:
+        raise HTTPException(409, "Email already in use")
+    user = User(
+        public_id=generate_public_id(),
+        email=email,
+        password_hash=hash_password(body.password),
+        full_name=body.full_name,
+        auth_provider="local",
+        role=body.role,
+        is_active=body.is_active,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    _safe_audit(
+        db, action="admin.user.create", actor_user_id=admin.id,
+        target_type="user", target_id=user.id,
+        metadata={"email": user.email, "role": user.role, "is_active": user.is_active},
+    )
+    return await get_user(user_ref=str(user.id), admin=admin, db=db)
 
 
 @router.put("/users/{user_ref}")

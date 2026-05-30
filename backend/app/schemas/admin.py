@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Literal, Optional, List
 from datetime import datetime
 
@@ -46,6 +46,17 @@ class UserUpdateRequest(BaseModel):
     role: Optional[Literal["user", "admin"]] = None
     full_name: Optional[str] = Field(default=None, max_length=100)
     email: Optional[str] = None
+
+
+class AdminUserCreateRequest(BaseModel):
+    # Admin-created local account. Email format is validated; the route stores
+    # it lowercased to match the canonical-identifier convention used at signup.
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    full_name: Optional[str] = Field(default=None, max_length=100)
+    # F11: closed set so an admin can't mass-assign an arbitrary role via the body.
+    role: Literal["user", "admin"] = "user"
+    is_active: bool = True
 
 
 class SessionItem(BaseModel):
