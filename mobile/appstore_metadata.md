@@ -113,9 +113,11 @@ Download Bisawtak now and turn your first voice message into text in seconds.
 ## باقي الحقول
 
 - **Support URL (مطلوب):** `https://voice.neojeen.com/support`
-  - English localization: `https://voice.neojeen.com/en/support`
+  - English localization: `https://voice.neojeen.com/support/en`
 - **Marketing URL (اختياري):** `https://voice.neojeen.com`
 - **Version:** `1.0.0`
 - **Copyright:** `2026 Neojeen`  _(أو `2026 بصوتك` لو عايز تماشي شاشة "عن التطبيق")_
 
-> الروابط موجودة فعلاً على السيرفر: `/privacy` `/terms` `/support` (+ `/en/...`). إيميل الدعم: support@neojeen.com
+> الصفحات القانونية صفحات Next.js في الـ admin app (مش الـ backend):
+> `/privacy` `/privacy/en` · `/terms` `/terms/en` · `/support` `/support/en`.
+> إيميل الدعم: support@neojeen.com

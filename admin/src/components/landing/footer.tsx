@@ -15,6 +15,8 @@ export function Footer() {
             <a href="#plans" className="hover:text-white transition">الباقات</a>
             <a href="#faq" className="hover:text-white transition">الأسئلة</a>
             <a href="/privacy" className="hover:text-white transition">سياسة الخصوصية</a>
+            <a href="/terms" className="hover:text-white transition">الشروط والأحكام</a>
+            <a href="/support" className="hover:text-white transition">الدعم</a>
             <a href={`mailto:${SUPPORT_EMAIL}`} className="hover:text-white transition">تواصل معنا</a>
           </div>
         </div>
