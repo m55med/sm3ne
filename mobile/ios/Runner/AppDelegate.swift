@@ -53,15 +53,48 @@ import UIKit
     } else {
       BisawtakDiag.log(tag: "appgroup_channel", msg: "FAILED to obtain registrar")
     }
+
+    // Double-forward fix: the Dart side PULLs any pending shared voice note the
+    // moment its handler is ready, via `getPendingSharedFile` on the same
+    // `com.bisawtak/share` channel SceneDelegate pushes on. This kills the
+    // cold-launch race where the native push fires before Flutter is listening
+    // and the first forward is silently dropped. Read+clear is atomic enough
+    // for our single-consumer use. Key kept in sync with SceneDelegate.
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ShareHandoffPull") {
+      let channel = FlutterMethodChannel(
+        name: "com.bisawtak/share",
+        binaryMessenger: registrar.messenger()
+      )
+      channel.setMethodCallHandler { call, result in
+        if call.method == "getPendingSharedFile" {
+          let defaults = UserDefaults.standard
+          let path = defaults.string(forKey: "pending_shared_file")
+          if path != nil { defaults.removeObject(forKey: "pending_shared_file") }
+          BisawtakDiag.log(tag: "pull", msg: "getPendingSharedFile → \(path ?? "nil")")
+          result(path)
+        } else {
+          // `sharedFile` (native→Dart push) is handled on the Dart side; any
+          // other Dart→native call on this channel is unknown.
+          result(FlutterMethodNotImplemented)
+        }
+      }
+      BisawtakDiag.log(tag: "pull_channel", msg: "registered")
+    } else {
+      BisawtakDiag.log(tag: "pull_channel", msg: "FAILED to obtain registrar")
+    }
   }
 
-  // Handle "Open with" file URLs
+  // Handle "Open with" file URLs. With the UIScene lifecycle this is rarely
+  // hit (SceneDelegate.openURLContexts handles it), but keep it safe: stash the
+  // path in the pull slot so Dart picks it up even if the VC isn't ready, and
+  // never force-unwrap the root controller (that used to crash on a nil VC).
   override func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey : Any] = [:]) -> Bool {
     if url.isFileURL {
-      // Copy to Documents/Inbox if not already there
-      let controller = window?.rootViewController as? FlutterViewController
-      let channel = FlutterMethodChannel(name: "com.bisawtak/share", binaryMessenger: controller!.binaryMessenger)
-      channel.invokeMethod("sharedFile", arguments: url.path)
+      UserDefaults.standard.set(url.path, forKey: "pending_shared_file")
+      if let controller = window?.rootViewController as? FlutterViewController {
+        let channel = FlutterMethodChannel(name: "com.bisawtak/share", binaryMessenger: controller.binaryMessenger)
+        channel.invokeMethod("sharedFile", arguments: url.path)
+      }
       return true
     }
     return super.application(app, open: url, options: options)

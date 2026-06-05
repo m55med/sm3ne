@@ -10,6 +10,7 @@ final class ResultSheetView: UIView {
   var onClose: (() -> Void)?
   var onCopy: ((String) -> Void)?
   var onOpenInApp: (() -> Void)?
+  var onUpgrade: (() -> Void)?
 
   private var currentText: String = ""
 
@@ -22,6 +23,8 @@ final class ResultSheetView: UIView {
   private let chipsRow = UIStackView()
   private let actionRow = UIStackView()
   private let copyButton = UIButton(type: .system)
+  private let upgradeButton = UIButton(type: .system)
+  private let upgradeNote = UILabel()
   private let openButton = UIButton(type: .system)
   private let langLabel = UILabel()
   private let requestIdLabel = UILabel()
@@ -142,6 +145,29 @@ final class ResultSheetView: UIView {
     copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
     container.addArrangedSubview(copyButton)
 
+    // "Higher quality" upgrade — only shown for a free on-device result. A
+    // bordered secondary button + a small note that it re-runs via the server
+    // and costs 2× the daily quota.
+    upgradeButton.setTitle("الحصول على جودة أعلى", for: .normal)
+    upgradeButton.setImage(UIImage(systemName: "sparkles"), for: .normal)
+    upgradeButton.tintColor = brand
+    upgradeButton.setTitleColor(brand, for: .normal)
+    upgradeButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+    upgradeButton.backgroundColor = brand.withAlphaComponent(0.10)
+    upgradeButton.layer.cornerRadius = 12
+    upgradeButton.layer.borderWidth = 1
+    upgradeButton.layer.borderColor = brand.withAlphaComponent(0.35).cgColor
+    upgradeButton.heightAnchor.constraint(equalToConstant: 46).isActive = true
+    upgradeButton.addTarget(self, action: #selector(upgradeTapped), for: .touchUpInside)
+    container.addArrangedSubview(upgradeButton)
+
+    upgradeNote.text = "يحوّل الصوت عبر الخادم — يستهلك ٢× من رصيدك اليومي"
+    upgradeNote.font = .systemFont(ofSize: 11)
+    upgradeNote.textColor = .secondaryLabel
+    upgradeNote.textAlignment = .center
+    upgradeNote.numberOfLines = 0
+    container.addArrangedSubview(upgradeNote)
+
     // Action row: language (trailing/right) + open-in-app (leading/left).
     openButton.setTitle("فتح في بصوتك", for: .normal)
     openButton.setImage(UIImage(systemName: "arrow.up.forward.app"), for: .normal)
@@ -172,11 +198,11 @@ final class ResultSheetView: UIView {
 
   // MARK: - States
 
-  func showLoading() {
+  func showLoading(message: String = "جاري تحويل الصوت...") {
     setResultHidden(true)
     spinner.superview?.isHidden = false
     spinner.startAnimating()
-    statusLabel.text = "جاري تحويل الصوت..."
+    statusLabel.text = message
   }
 
   func showResult(
@@ -216,6 +242,12 @@ final class ResultSheetView: UIView {
       requestIdLabel.text = "سيظهر معرّف الطلب بعد المزامنة"
       requestIdLabel.isHidden = false
     }
+
+    // Offer "higher quality" only for a free on-device result. A server result
+    // is already the high-quality path, so re-running it would just waste quota.
+    upgradeButton.isEnabled = true
+    upgradeButton.isHidden = !onDevice
+    upgradeNote.isHidden = !onDevice
   }
 
   /// Shown when neither on-device nor the server could produce a result.
@@ -247,6 +279,8 @@ final class ResultSheetView: UIView {
     chipsRow.isHidden = hidden
     bodyScroll.superview?.isHidden = hidden
     copyButton.isHidden = hidden
+    upgradeButton.isHidden = hidden
+    upgradeNote.isHidden = hidden
     actionRow.isHidden = hidden
     requestIdLabel.isHidden = hidden
   }
@@ -285,4 +319,9 @@ final class ResultSheetView: UIView {
   @objc private func closeTapped() { onClose?() }
   @objc private func copyTapped() { onCopy?(currentText) }
   @objc private func openTapped() { onOpenInApp?() }
+  @objc private func upgradeTapped() {
+    // Guard against double-taps while the server pass is in flight.
+    upgradeButton.isEnabled = false
+    onUpgrade?()
+  }
 }

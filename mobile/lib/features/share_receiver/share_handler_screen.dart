@@ -42,6 +42,8 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
   Transcription? _result;
   String? _error;
   bool _processing = true;
+  // True while the "higher quality" server re-transcription is in flight.
+  bool _upgrading = false;
 
   @override
   void initState() {
@@ -122,6 +124,39 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
     }
   }
 
+  /// Re-runs the shared audio through the server for a higher-quality result
+  /// when the user isn't happy with the free on-device transcript. This is a
+  /// deliberate premium action — the backend bills it at 2× the daily quota.
+  Future<void> _upgradeQuality() async {
+    if (_result == null || _upgrading) return;
+    setState(() => _upgrading = true);
+    try {
+      final result =
+          await ref.read(sttOrchestratorProvider).retranscribeOnServer(
+                widget.filePath,
+                source: 'share',
+                sourceApp: widget.sourceApp,
+              );
+      if (!mounted) return;
+      // Refresh the cached subscription so the daily-used counter reflects the
+      // 2 units this re-do just consumed.
+      ref.invalidate(currentSubscriptionProvider);
+      setState(() {
+        _result = result;
+        _upgrading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _upgrading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(friendlyErrorMessage(e)),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
+  }
+
   /// Opens the full result screen inside the app. Uses the local row id when we
   /// have it (so the user lands on the rich detail screen with save/share);
   /// otherwise falls back to the transcriptions list.
@@ -152,8 +187,10 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
               processing: _processing,
               error: _error,
               result: _result,
+              upgrading: _upgrading,
               onClose: () => widget.onDone?.call(),
               onCopy: _copy,
+              onUpgrade: _upgradeQuality,
               onOpenInApp: _openInApp,
             ),
           ),
@@ -167,16 +204,20 @@ class _SheetBody extends StatelessWidget {
   final bool processing;
   final String? error;
   final Transcription? result;
+  final bool upgrading;
   final VoidCallback onClose;
   final VoidCallback onCopy;
+  final VoidCallback onUpgrade;
   final VoidCallback onOpenInApp;
 
   const _SheetBody({
     required this.processing,
     required this.error,
     required this.result,
+    required this.upgrading,
     required this.onClose,
     required this.onCopy,
+    required this.onUpgrade,
     required this.onOpenInApp,
   });
 
@@ -329,6 +370,34 @@ class _SheetBody extends StatelessWidget {
             label: const Text('نسخ'),
           ),
         ),
+        // "Higher quality" upgrade — only offered for a free on-device result.
+        // A server result is already the high-quality path, so we hide it then.
+        if (t.isClientSide) ...[
+          const SizedBox(height: AppSpacing.sm),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: OutlinedButton.icon(
+              onPressed: upgrading ? null : onUpgrade,
+              icon: upgrading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.auto_awesome, size: 18),
+              label: Text(
+                upgrading ? 'جاري التحويل عبر الخادم…' : 'الحصول على جودة أعلى',
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'يحوّل الصوت عبر الخادم — يستهلك ٢× من رصيدك اليومي',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+          ),
+        ],
         const SizedBox(height: AppSpacing.sm),
         // Action row: "فتح في بصوتك" on the leading (left) side, language on
         // the trailing (right) side, per the product spec.

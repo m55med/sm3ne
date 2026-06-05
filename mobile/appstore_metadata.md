@@ -5,6 +5,48 @@
 
 ---
 
+## App Information page (الحقول الثابتة لكل الإصدارات)
+
+- **Name (≤25):** `بصوتك: تفريغ صوتي ونص`  _(21 حرف)_ — أو `بصوتك` لو عايز الاسم المختصر.
+- **Subtitle (≤30):** `حوّل الصوت لنص بدقة وسرعة`  _(25 حرف)_
+- **Primary Language:** Arabic (العربية)
+- **Category:** Primary = **Productivity** · Secondary (اختياري) = **Utilities**
+- **Content Rights:** لا يحتوي محتوى طرف ثالث → اختر **"No"**
+- **App Encryption:** تمام — `ITSAppUsesNonExemptEncryption = NO` في Info.plist (لا وثائق مطلوبة).
+
+### Age Ratings (الإجابات → النتيجة 4+)
+- In-App Controls: **None**
+- Capabilities → Unrestricted Web Access **No** · User-Generated Content **No** · Messaging/Chat **No** · Advertising **No**
+- Mature Themes / Medical / Sexuality / Violence / Chance-Based: كلها **None**
+
+### ⚠️ تحذيرات قبل الـ Submit
+1. **AdMob SDK مدمج لكن مش مُستخدم** والـ App ID بتاع iOS هو **test ID** من Google → سبب شائع للرفض. إما شيل `google_mobile_ads` + `GADApplicationIdentifier`، أو فعّل الإعلانات بـ ID حقيقي + ATT prompt.
+2. **DSA trader status:** فيه اشتراكات مدفوعة → غالباً لازم تعلن **trader** مش non-trader (قرار قانوني).
+
+---
+
+## App Privacy (Data nutrition labels) — مبني على تدقيق الكود
+
+> **Tracking = No** (مفيش IDFA / ATT / مشاركة مع شبكات إعلانات أو data brokers. AdMob غير مستخدم. `PrivacyInfo.xcprivacy` فيه `NSPrivacyTracking=false`).
+> الجدول: D=Collected · L=Linked to user · T=Tracking · الغرض.
+
+| Apple data type | D | L | T | Purpose | مصدر |
+|---|---|---|---|---|---|
+| Contact Info → Email | ✓ | ✓ | ✗ | App Functionality | تسجيل/مصادقة |
+| Contact Info → Name | ✓ (اختياري) | ✓ | ✗ | App Functionality | الملف الشخصي |
+| User Content → Audio Data | ✓ | ✓ | ✗ | App Functionality | الصوت يُرسل للتفريغ ثم يُحذف فوراً |
+| User Content → Customer Support | ✓ | ✓ | ✗ | App Functionality | تذاكر الدعم + مرفقات |
+| Identifiers → User ID | ✓ | ✓ | ✗ | App Functionality | حساب المستخدم (public_id) |
+| Identifiers → Device ID | ✓ | ✓ | ✗ | App Functionality | FCM token + بيانات جهاز للإشعارات |
+| Purchases → Purchase History | ✓ | ✓ | ✗ | App Functionality | اسم الباقة (free/monthly/annual) |
+| Usage Data → Product Interaction | ✓ | ✗ (مجهول) | ✗ | Analytics | Firebase Analytics events |
+| Diagnostics → Crash Data | ✓ | ✗ | ✗ | App Functionality | Firebase Crashlytics |
+
+**مش متجمّع / محلي بس:** نص التفريغ (يُخزَّن على الجهاز SQLite فقط، مش على السيرفر) · صوت on-device STT (مايخرجش من الجهاز).
+**أطراف ثالثة تستقبل الصوت (معالِجات تفريغ، مش tracking):** Speechmatics · Google Gemini · Groq · AssemblyAI · (Whisper محلي على سيرفرنا) · Telegram (لبوت `@bisawtikbot` فقط).
+
+---
+
 ## App Name (30 حرف)
 
 - **AR:** `بصوتك: تفريغ صوتي وتحويل لنص` _(28 حرف)_

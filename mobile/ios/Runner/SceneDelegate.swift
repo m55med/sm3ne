@@ -45,6 +45,27 @@ class SceneDelegate: FlutterSceneDelegate {
   private static let appGroupID = "group.com.bisawtak.bisawtak"
   private static let sharedPathKey = "shared_audio_path"
   private static let channelName = "com.bisawtak/share"
+  // PULL slot (the double-forward fix). Whenever we copy a shared voice note
+  // into the app's Documents sandbox we ALSO stash its in-sandbox path here, in
+  // the app's own standard UserDefaults. The Dart side pulls this on startup
+  // (`getPendingSharedFile`) the moment its handler is ready — so even when the
+  // cold-launch PUSH races ahead of Flutter and is dropped, the share is never
+  // lost. AppDelegate owns the read+clear handler. Kept in sync with the literal
+  // in AppDelegate.swift.
+  static let pendingSharedFileKey = "pending_shared_file"
+
+  static func stashPendingSharedFile(_ path: String) {
+    UserDefaults.standard.set(path, forKey: pendingSharedFileKey)
+  }
+
+  /// Clear the pull slot. When `ifEquals` is given we only clear if the slot
+  /// still points at that exact path, so a newer share that arrived in between
+  /// isn't wiped by a late push callback for an older one.
+  static func clearPendingSharedFile(ifEquals path: String? = nil) {
+    let defaults = UserDefaults.standard
+    if let path = path, defaults.string(forKey: pendingSharedFileKey) != path { return }
+    defaults.removeObject(forKey: pendingSharedFileKey)
+  }
 
   // Cold launch: app was not running, Share Extension (or any bisawtak://)
   // opened it.
@@ -99,12 +120,9 @@ class SceneDelegate: FlutterSceneDelegate {
       return
     }
 
-    guard let controller = window?.rootViewController as? FlutterViewController else {
-      diag("inbox", "FlutterViewController not ready — retry")
-      retryInbox(inboxURL, retries: retriesLeft)
-      return
-    }
-
+    // Copy out of Inbox into Documents ONCE, up front — independent of whether
+    // Flutter is ready yet. Inbox is auto-cleaned and read-only-ish, so a
+    // pending file MUST live in our own Documents to survive a cold launch.
     let ext = inboxURL.pathExtension.isEmpty ? "m4a" : inboxURL.pathExtension
     guard
       let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
@@ -115,35 +133,18 @@ class SceneDelegate: FlutterSceneDelegate {
     let destURL = docsDir.appendingPathComponent("shared_\(UUID().uuidString).\(ext)")
     do {
       try FileManager.default.copyItem(at: inboxURL, to: destURL)
+      try? FileManager.default.removeItem(at: inboxURL)
       diag("inbox", "copied → \(destURL.lastPathComponent)")
     } catch {
       diag("inbox", "copy error: \(error.localizedDescription)")
       return
     }
 
-    let channel = FlutterMethodChannel(
-      name: Self.channelName,
-      binaryMessenger: controller.binaryMessenger
-    )
-    diag("inbox", "invokeMethod sharedFile → Flutter")
-    channel.invokeMethod("sharedFile", arguments: destURL.path) { [weak self] result in
-      let notImplemented = (result as AnyObject) === FlutterMethodNotImplemented
-      if notImplemented {
-        diag("inbox", "Flutter handler MISSING — retry")
-        try? FileManager.default.removeItem(at: destURL)
-        self?.retryInbox(inboxURL, retries: retriesLeft)
-      } else {
-        diag("inbox", "✓ Flutter received — cleaning Inbox")
-        try? FileManager.default.removeItem(at: inboxURL)
-      }
-    }
-  }
-
-  private func retryInbox(_ url: URL, retries: Int) {
-    guard retries > 0 else { return }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-      self?.deliverInboxFile(url, retriesLeft: retries - 1)
-    }
+    // Stash for the Dart-side PULL first (the reliable path), then PUSH for the
+    // warm case. If the push races ahead of Flutter and is dropped, the slot
+    // keeps the share alive until Dart pulls it on startup.
+    Self.stashPendingSharedFile(destURL.path)
+    pushSharedFile(path: destURL.path, tag: "inbox", retriesLeft: retriesLeft)
   }
 
   // BULLETPROOF: every time the scene becomes active, drain any pending
@@ -163,23 +164,17 @@ class SceneDelegate: FlutterSceneDelegate {
   /// channel handler aren't ready the moment the scene connects.
   private func deliverSharedAudio(retriesLeft: Int) {
     let defaults = UserDefaults(suiteName: Self.appGroupID)
-    let groupPath = defaults?.string(forKey: Self.sharedPathKey) ?? ""
     if defaults == nil {
       diag("deliver", "UserDefaults(suiteName:) returned nil — App Group not accessible!")
       return
     }
+    let groupPath = defaults?.string(forKey: Self.sharedPathKey) ?? ""
     if groupPath.isEmpty {
       diag("deliver", "no shared_audio_path in App Group (retries=\(retriesLeft))")
       return
     }
 
     diag("deliver", "found path=\(groupPath) retries=\(retriesLeft)")
-
-    guard let controller = window?.rootViewController as? FlutterViewController else {
-      diag("deliver", "FlutterViewController not ready — retry")
-      retryLater(retriesLeft)
-      return
-    }
 
     let groupURL = URL(fileURLWithPath: groupPath)
     guard FileManager.default.fileExists(atPath: groupURL.path) else {
@@ -191,7 +186,10 @@ class SceneDelegate: FlutterSceneDelegate {
     }
 
     // Copy out of the App Group container into our own Documents directory so
-    // Flutter's sandbox guard accepts the path.
+    // Flutter's sandbox guard accepts the path. We do this BEFORE worrying about
+    // whether Flutter is ready — once the file is safe in Documents and stashed
+    // in the pull slot, we can immediately drain the App Group hand-off so the
+    // same note never gets reprocessed on a later launch.
     let ext = groupURL.pathExtension.isEmpty ? "m4a" : groupURL.pathExtension
     guard
       let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
@@ -208,34 +206,52 @@ class SceneDelegate: FlutterSceneDelegate {
       return
     }
 
+    // Drain the App Group hand-off now that the file is safe in Documents.
+    defaults?.removeObject(forKey: Self.sharedPathKey)
+    defaults?.synchronize()
+    try? FileManager.default.removeItem(at: groupURL)
+
+    // Stash for the Dart PULL, then PUSH for the warm case.
+    Self.stashPendingSharedFile(destURL.path)
+    pushSharedFile(path: destURL.path, tag: "deliver", retriesLeft: retriesLeft)
+  }
+
+  /// PUSH an already-in-sandbox path to Flutter. The companion to the Dart-side
+  /// PULL: on a warm app this delivers instantly; on a cold launch where the
+  /// Dart handler isn't up yet it retries briefly, and if it still misses, the
+  /// pull slot (set by the callers) guarantees Dart picks it up on startup.
+  private func pushSharedFile(path: String, tag: String, retriesLeft: Int) {
+    guard let controller = window?.rootViewController as? FlutterViewController else {
+      diag(tag, "FlutterViewController not ready — retry (\(retriesLeft))")
+      retryPush(path: path, tag: tag, retriesLeft: retriesLeft)
+      return
+    }
     let channel = FlutterMethodChannel(
       name: Self.channelName,
       binaryMessenger: controller.binaryMessenger
     )
-    diag("deliver", "invokeMethod sharedFile → Flutter")
-    channel.invokeMethod("sharedFile", arguments: destURL.path) { [weak self] result in
+    diag(tag, "invokeMethod sharedFile → Flutter")
+    channel.invokeMethod("sharedFile", arguments: path) { [weak self] result in
       let notImplemented = (result as AnyObject) === FlutterMethodNotImplemented
       if notImplemented {
-        // Dart-side handler not up yet — discard this copy and retry from the
-        // App Group slot (still populated).
-        diag("deliver", "Flutter handler MISSING — retry")
-        try? FileManager.default.removeItem(at: destURL)
-        self?.retryLater(retriesLeft)
+        diag(tag, "Flutter handler MISSING — retry (\(retriesLeft))")
+        self?.retryPush(path: path, tag: tag, retriesLeft: retriesLeft)
       } else {
-        // Delivered. Clear the hand-off slot and the App Group copy so a later
-        // launch never reprocesses the same voice note.
-        diag("deliver", "✓ Flutter received — clearing slot")
-        defaults?.removeObject(forKey: Self.sharedPathKey)
-        defaults?.synchronize()
-        try? FileManager.default.removeItem(at: groupURL)
+        // Delivered via push — clear the pull slot so Dart doesn't re-deliver
+        // the same note when it next starts (only if it's still this path).
+        diag(tag, "✓ Flutter received")
+        Self.clearPendingSharedFile(ifEquals: path)
       }
     }
   }
 
-  private func retryLater(_ retriesLeft: Int) {
-    guard retriesLeft > 0 else { return }
+  private func retryPush(path: String, tag: String, retriesLeft: Int) {
+    guard retriesLeft > 0 else {
+      diag(tag, "push gave up — Dart will PULL the slot on next ready")
+      return
+    }
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-      self?.deliverSharedAudio(retriesLeft: retriesLeft - 1)
+      self?.pushSharedFile(path: path, tag: tag, retriesLeft: retriesLeft - 1)
     }
   }
 }

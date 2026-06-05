@@ -150,6 +150,11 @@ class TranscriptionRequest(Base):
     model_used = Column(String(80), nullable=True)
     # Wall-clock time spent in the transcription dispatch (provider call), ms.
     latency_ms = Column(Integer, nullable=True)
+    # How many daily-quota units this request consumes. 1 for a normal upload /
+    # automatic server fallback; 2 for a user-initiated "higher quality" re-do
+    # (server re-transcription of a free on-device result). check_daily_quota
+    # SUMs this column instead of counting rows. Legacy/null rows count as 1.
+    quota_cost = Column(Integer, default=1)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     user = relationship("User", back_populates="transcription_requests")

@@ -132,7 +132,11 @@ def _effective_daily_limit(request: Request, db: Session, user_id: int) -> int:
 
     # Monthly smart distribution (applies to both app users and API-key users when api_cap == -1)
     if plan and plan.monthly_request_limit is not None and plan.monthly_request_limit >= 0:
-        used_this_month = db.query(func.count(TranscriptionRequest.id)).filter(
+        # Sum quota_cost (not row count) so a "higher quality" re-do that costs 2
+        # draws down the monthly allowance by 2. COALESCE keeps legacy rows at 1.
+        used_this_month = db.query(
+            func.coalesce(func.sum(func.coalesce(TranscriptionRequest.quota_cost, 1)), 0)
+        ).filter(
             TranscriptionRequest.user_id == user_id,
             TranscriptionRequest.created_at >= start_of_current_month_utc(),
             TranscriptionRequest.status != "failed",
@@ -145,7 +149,15 @@ def _effective_daily_limit(request: Request, db: Session, user_id: int) -> int:
     return static_daily
 
 
-def check_daily_quota(request: Request, user: User, db: Session) -> None:
+def check_daily_quota(request: Request, user: User, db: Session, incoming_cost: int = 1) -> None:
+    """Enforce the per-day transcription allowance.
+
+    ``incoming_cost`` is how many quota units the request about to run will
+    consume (1 normally, 2 for a "higher quality" server re-do). Usage is the
+    SUM of ``quota_cost`` over today's non-failed rows (legacy/null rows = 1),
+    and the request is rejected when ``used + incoming_cost`` would exceed the
+    limit — so a cost-2 request needs 2 free units, not just 1.
+    """
     limit = _effective_daily_limit(request, db, user.id)
     if limit < 0:
         return  # unlimited
@@ -157,7 +169,9 @@ def check_daily_quota(request: Request, user: User, db: Session) -> None:
             detail={"error": "api_disabled_on_plan", "message": "API access is not allowed on your current plan."},
         )
 
-    q = db.query(func.count(TranscriptionRequest.id)).filter(
+    q = db.query(
+        func.coalesce(func.sum(func.coalesce(TranscriptionRequest.quota_cost, 1)), 0)
+    ).filter(
         TranscriptionRequest.user_id == user.id,
         TranscriptionRequest.created_at >= start_of_today_utc(),
         TranscriptionRequest.status != "failed",
@@ -173,7 +187,7 @@ def check_daily_quota(request: Request, user: User, db: Session) -> None:
         q = q.filter(TranscriptionRequest.api_key_id.isnot(None))
 
     used = q.scalar() or 0
-    if used >= limit:
+    if used + incoming_cost > limit:
         resets_at = start_of_today_utc() + timedelta(days=1)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

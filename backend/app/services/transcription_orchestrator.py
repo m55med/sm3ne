@@ -59,6 +59,7 @@ async def run_transcription(
     plan,  # Plan ORM row or None
     is_live_recording: bool,
     resolved_source: str,
+    quota_cost: int = 1,
 ) -> dict[str, Any]:
     """Run the full pipeline against a tmp file that the route already wrote.
 
@@ -95,7 +96,11 @@ async def run_transcription(
         )
 
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    daily_used = db.query(func.count(TranscriptionRequest.id)).filter(
+    # Sum quota_cost (not row count) to match check_daily_quota — a "higher
+    # quality" re-do weighs 2. COALESCE keeps legacy/null rows at 1.
+    daily_used = db.query(
+        func.coalesce(func.sum(func.coalesce(TranscriptionRequest.quota_cost, 1)), 0)
+    ).filter(
         TranscriptionRequest.user_id == user_id,
         TranscriptionRequest.created_at >= today_start,
         TranscriptionRequest.status != "failed",
@@ -116,8 +121,9 @@ async def run_transcription(
         plan_source_at_request=plan_source,
         daily_limit_at_request=plan.daily_request_limit if plan else None,
         monthly_limit_at_request=plan.monthly_request_limit if plan else None,
-        daily_used_at_request=daily_used,  # count BEFORE this request
+        daily_used_at_request=daily_used,  # units used BEFORE this request
         provider_used=provider_used,
+        quota_cost=quota_cost,
     )
     db.add(req_log)
     db.commit()
@@ -183,4 +189,5 @@ async def run_transcription(
     db.commit()
 
     response_data["request_id"] = req_log.id
+    response_data["quota_cost"] = quota_cost
     return response_data

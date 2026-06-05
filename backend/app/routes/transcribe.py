@@ -159,6 +159,11 @@ async def transcribe(
     # rejected by FastAPI/Pydantic with 422 before our handler runs.
     source: Literal["upload", "recording", "share", "api"] = Form("upload"),
     is_live_recording: bool = Form(False),
+    # "Higher quality" re-do: the mobile app shows a free on-device transcript
+    # and lets the user re-run it through the server for a better result. That
+    # deliberate premium action costs 2 daily-quota units instead of 1. Only
+    # honoured for non-live requests (live has its own separate counter).
+    high_quality: bool = Form(False),
     user: User = Depends(get_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -170,10 +175,12 @@ async def transcribe(
 
     plan = getattr(request.state, "plan", None) or get_user_plan(db, user.id)
 
+    quota_cost = 2 if (high_quality and not is_live_recording) else 1
+
     if is_live_recording:
         _check_live_recording_quota(db, user.id, plan)
     else:
-        check_daily_quota(request, user, db)
+        check_daily_quota(request, user, db, incoming_cost=quota_cost)
 
     # F8: validate extension + magic bytes BEFORE we commit to a full upload.
     # We need at least the first chunk to run magic-byte detection, so we
@@ -215,6 +222,7 @@ async def transcribe(
             plan=plan,
             is_live_recording=is_live_recording,
             resolved_source=resolved_source,
+            quota_cost=quota_cost,
         )
     except HTTPException:
         raise

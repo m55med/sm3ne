@@ -113,23 +113,31 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
   void _handleIncomingShares() {
     RemoteLogger.log('share', '_handleIncomingShares registered');
 
-    // Handle shared files when app is already running
+    // Handle shared files when app is already running (Android warm start via
+    // singleTop onNewIntent). reset() after handling clears the plugin's stored
+    // intent so the NEXT forward fires cleanly — without it, a forward made
+    // while the app is backgrounded can be swallowed and the user has to share
+    // twice (the Android side of the double-forward bug).
     ReceiveSharingIntent.instance.getMediaStream().listen((files) {
       RemoteLogger.log('share', 'rsi-stream fired (${files.length} files)');
       if (files.isNotEmpty && files.first.path.isNotEmpty) {
         _acceptSharedPath(files.first.path);
+        ReceiveSharingIntent.instance.reset();
       }
     });
 
-    // Handle shared files when app is opened via share
+    // Handle shared files when app is opened via share (Android cold start).
+    // reset() stops a rebuild from re-delivering the same initial file.
     ReceiveSharingIntent.instance.getInitialMedia().then((files) {
       RemoteLogger.log('share', 'rsi-initial fired (${files.length} files)');
       if (files.isNotEmpty && files.first.path.isNotEmpty) {
         _acceptSharedPath(files.first.path);
+        ReceiveSharingIntent.instance.reset();
       }
     });
 
-    // Handle "Open with" file URLs from iOS native (our SceneDelegate).
+    // Handle "Open with" file URLs from iOS native (our SceneDelegate) — the
+    // native side PUSHes shared voice notes here.
     const channel = MethodChannel('com.bisawtak/share');
     channel.setMethodCallHandler((call) async {
       RemoteLogger.log('share', 'channel called: ${call.method}');
@@ -138,6 +146,23 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
         _acceptSharedPath(path);
       }
     });
+
+    // Double-forward fix (iOS): the native push races against this Dart handler
+    // on a cold launch and the FIRST forward used to be dropped. Now that our
+    // handler is registered, immediately PULL any file the native side stashed
+    // before we were listening. accept() dedupes by path, and the native slot
+    // is read-and-cleared, so this never double-processes what the push already
+    // delivered. iOS-only: Android delivery goes through receive_sharing_intent.
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      channel.invokeMethod<String>('getPendingSharedFile').then((path) {
+        RemoteLogger.log('share', 'pull getPendingSharedFile → ${path ?? "nil"}');
+        if (path != null && path.isNotEmpty) {
+          _acceptSharedPath(path);
+        }
+      }).catchError((Object e) {
+        RemoteLogger.log('share', 'pull failed: $e');
+      });
+    }
   }
 
   /// Validates an incoming shared-file path against the app sandbox + allowed

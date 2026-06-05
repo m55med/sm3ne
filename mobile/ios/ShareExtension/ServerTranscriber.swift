@@ -19,6 +19,7 @@ enum ServerTranscriber {
     fileURL: URL,
     baseUrl: String,
     token: String,
+    highQuality: Bool = false,
     completion: @escaping (Result<Response, String>) -> Void
   ) {
     guard let url = URL(string: "\(baseUrl)/transcribe") else {
@@ -52,6 +53,10 @@ enum ServerTranscriber {
     // Backend Literal: upload | recording | share | api.
     appendField("source", "share")
     appendField("is_live_recording", "false")
+    // Premium re-do: ask the backend for its higher-quality pass (billed 2×).
+    if highQuality {
+      appendField("high_quality", "true")
+    }
     body.append("--\(boundary)--\r\n".data(using: .utf8)!)
     req.httpBody = body
 

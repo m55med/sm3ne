@@ -36,6 +36,11 @@ class TranscriptionRepository {
     String source = 'uploaded',
     String? sourceApp,
     bool isLiveRecording = false,
+    // When true the backend runs a premium "higher quality" pass and bills it
+    // at 2× the daily quota (see backend routes/transcribe.py). Used by the
+    // share sheet's "الحصول على جودة أعلى" button to re-do a free on-device
+    // result through the server.
+    bool highQuality = false,
     void Function(int sent, int total)? onSendProgress,
     CancelToken? cancelToken,
   }) async {
@@ -50,6 +55,7 @@ class TranscriptionRepository {
       ),
       'source': backendSource,
       'is_live_recording': isLiveRecording.toString(),
+      if (highQuality) 'high_quality': 'true',
     });
 
     try {

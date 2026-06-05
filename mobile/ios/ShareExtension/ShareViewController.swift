@@ -86,6 +86,7 @@ class ShareViewController: UIViewController {
     sheet.onClose = { [weak self] in self?.close() }
     sheet.onCopy = { [weak self] text in self?.copyToClipboard(text) }
     sheet.onOpenInApp = { [weak self] in self?.openInApp() }
+    sheet.onUpgrade = { [weak self] in self?.upgradeToServer() }
     view.addSubview(sheet)
     NSLayoutConstraint.activate([
       sheet.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -283,6 +284,53 @@ class ShareViewController: UIViewController {
     if queue.count > 100 { queue = Array(queue.suffix(100)) }
     defaults.set(queue, forKey: AppGroup.pendingClientLogsKey)
     defaults.synchronize()
+  }
+
+  /// User tapped "الحصول على جودة أعلى" on a free on-device result — re-run the
+  /// shared file through the server's premium pass (the backend bills it at 2×
+  /// the daily quota). Reuses the copy already saved in the App Group container.
+  private func upgradeToServer() {
+    guard let path = savedAudioPath else {
+      showError("تعذّر العثور على الملف الصوتي."); return
+    }
+    guard let token = AppGroup.accessToken() else {
+      DispatchQueue.main.async {
+        self.sheet.showResultUnavailable(
+          message: "افتح تطبيق بصوتك وسجّل الدخول لإكمال التحويل عبر الخادم.",
+          canOpenApp: true)
+      }
+      return
+    }
+    let fileURL = URL(fileURLWithPath: path)
+    DispatchQueue.main.async {
+      self.sheet.showLoading(message: "جاري التحويل عبر الخادم لجودة أعلى…")
+    }
+    ServerTranscriber.transcribe(
+      fileURL: fileURL,
+      baseUrl: AppGroup.apiBaseUrl(),
+      token: token,
+      highQuality: true
+    ) { [weak self] result in
+      guard let self = self else { return }
+      switch result {
+      case .success(let resp):
+        diag("upgrade", "✓ request_id=\(resp.requestId ?? -1)")
+        DispatchQueue.main.async {
+          self.sheet.showResult(
+            text: resp.text,
+            langName: resp.langName ?? Self.langName(resp.lang ?? "ar"),
+            wordCount: resp.wordCount ?? Self.wordCount(resp.text),
+            durationSeconds: resp.duration ?? Self.audioDuration(fileURL),
+            requestId: resp.requestId,
+            onDevice: false)
+        }
+      case .failure(let message):
+        diag("upgrade", "✗ \(message)")
+        DispatchQueue.main.async {
+          self.sheet.showResultUnavailable(message: message, canOpenApp: true)
+        }
+      }
+    }
   }
 
   // MARK: - Actions

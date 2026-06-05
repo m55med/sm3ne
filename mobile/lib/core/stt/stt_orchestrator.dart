@@ -139,6 +139,29 @@ class SttOrchestrator {
     );
   }
 
+  /// Re-runs a file straight through the server, skipping on-device entirely,
+  /// and asks the backend for its premium "higher quality" pass (billed at 2×
+  /// the daily quota). The share sheet calls this when the user taps "الحصول
+  /// على جودة أعلى" on a free on-device result they weren't happy with.
+  Future<Transcription> retranscribeOnServer(
+    String filePath, {
+    required String source,
+    String? sourceApp,
+    void Function(int sent, int total)? onSendProgress,
+    CancelToken? cancelToken,
+  }) {
+    RemoteLogger.log('stt_orch', 'retranscribeOnServer (high_quality) source=$source');
+    return _repo.transcribeFile(
+      filePath,
+      source: source,
+      sourceApp: sourceApp,
+      isLiveRecording: false,
+      highQuality: true,
+      onSendProgress: onSendProgress,
+      cancelToken: cancelToken,
+    );
+  }
+
   String _shortLocale(String uiLocale) {
     final c = uiLocale.toLowerCase();
     if (c.startsWith('en')) return 'en';

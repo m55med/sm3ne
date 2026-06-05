@@ -112,6 +112,9 @@ def _run_idempotent_ddl(db):
         "CREATE INDEX IF NOT EXISTS idx_requests_provider_created ON transcription_requests(provider_used, created_at)",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS model_used VARCHAR(80)",
         "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS latency_ms INTEGER",
+        # quota_cost: daily-quota weight per request. DEFAULT 1 backfills every
+        # existing row; a user-initiated "higher quality" server re-do stamps 2.
+        "ALTER TABLE transcription_requests ADD COLUMN IF NOT EXISTS quota_cost INTEGER DEFAULT 1",
         "CREATE INDEX IF NOT EXISTS idx_requests_apikey_created ON transcription_requests(api_key_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_requests_status ON transcription_requests(status)",
         """CREATE TABLE IF NOT EXISTS account_deletions (
