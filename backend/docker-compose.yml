@@ -1,14 +1,16 @@
 services:
-  whisper-api:
+  # The Bisawtak backend API (FastAPI). Historically named "whisper-api" back
+  # when it ran a local Whisper model; transcription is now 100% remote ASR
+  # providers, so the service is named for what it actually is.
+  bisawtak-api:
     build: .
-    container_name: whisper-api
+    container_name: bisawtak-api
     ports:
       - "8000:8000"
     env_file:
       - .env
     restart: unless-stopped
     volumes:
-      - whisper-cache:/root/.cache/whisper
       # Support-ticket image attachments (and any future user-uploaded files).
       # MUST be a named volume — anything written to /app/uploads is wiped
       # on every container recreate without this.
@@ -23,8 +25,15 @@ services:
       bisawtak-db:
         condition: service_healthy
     networks:
-      - bisawtak-net
-      - proxy-network
+      bisawtak-net: {}
+      proxy-network:
+        # Legacy DNS alias: nginx-proxy-manager (proxy host for voice.neojeen.com)
+        # still forwards to "whisper-api". Keeping this alias lets the rename ship
+        # with ZERO downtime and without restarting the shared reverse proxy.
+        # To retire it: change the Forward Hostname to "bisawtak-api" in the NPM
+        # UI, then delete this alias.
+        aliases:
+          - whisper-api
 
   bisawtak-admin:
     build: ../admin
@@ -57,7 +66,6 @@ services:
       - bisawtak-net
 
 volumes:
-  whisper-cache:
   bisawtak-uploads:
   bisawtak-pgdata:
 

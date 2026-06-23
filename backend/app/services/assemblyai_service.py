@@ -14,6 +14,7 @@ from app.core.config import (
     ASSEMBLYAI_MODEL,
     ASSEMBLYAI_POLL_INTERVAL,
     ASSEMBLYAI_TIMEOUT_SECONDS,
+    normalize_language,
 )
 
 
@@ -77,11 +78,17 @@ async def _create_job(
         "audio_url": audio_url,
         "speech_model": model,
     }
-    # Universal model auto-detects language; supply it as a hint only for other models.
-    if language and model != "universal":
+    # `language` is None ⇒ auto-detect; a code (e.g. "ar") ⇒ pin that language.
+    #
+    # A pinned language is honoured via `language_code` for ALL models. For
+    # auto-detect, the "universal" model identifies the language NATIVELY (it
+    # rejects the `language_detection` flag, so we send NOTHING); other models
+    # (best/nano) need `language_detection: true`.
+    if language:
         body["language_code"] = language
-    elif language:
+    elif model != "universal":
         body["language_detection"] = True
+    # else: universal auto-detects natively — no language params.
 
     resp = await client.post(
         f"{ASSEMBLYAI_BASE_URL}/transcript",
@@ -187,7 +194,7 @@ async def transcribe_from_path(
     path: str, model: str | None = None, language: str | None = None
 ) -> dict:
     chosen_model = model or default_model()
-    lang = language or ASSEMBLYAI_LANGUAGE
+    lang = normalize_language(language if language is not None else ASSEMBLYAI_LANGUAGE)
 
     async with httpx.AsyncClient() as client:
         audio_url = await _upload(client, path)

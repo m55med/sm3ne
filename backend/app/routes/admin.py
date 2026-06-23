@@ -152,15 +152,17 @@ async def stats(admin: User = Depends(get_current_admin), db: Session = Depends(
         UserSubscription.expires_at > now,
     ).scalar()
 
-    total_req = db.query(func.count(TranscriptionRequest.id)).scalar()
+    total_req = db.query(func.count(TranscriptionRequest.id)).filter(
+        _excludes_translation()
+    ).scalar()
     req_today = db.query(func.count(TranscriptionRequest.id)).filter(
-        TranscriptionRequest.created_at >= today
+        TranscriptionRequest.created_at >= today, _excludes_translation()
     ).scalar()
     req_week = db.query(func.count(TranscriptionRequest.id)).filter(
-        TranscriptionRequest.created_at >= week_ago
+        TranscriptionRequest.created_at >= week_ago, _excludes_translation()
     ).scalar()
     req_month = db.query(func.count(TranscriptionRequest.id)).filter(
-        TranscriptionRequest.created_at >= month_ago
+        TranscriptionRequest.created_at >= month_ago, _excludes_translation()
     ).scalar()
 
     return AdminStatsResponse(
@@ -223,6 +225,14 @@ async def list_users(
         ))
 
     return UserListResponse(users=items, total=total, page=page, per_page=per_page)
+
+
+def _excludes_translation():
+    """Filter predicate that drops 'translation' usage rows from transcription
+    stats. Translations are billed via a TranscriptionRequest row (so the daily
+    quota counts them) but are NOT transcriptions, so they must not inflate the
+    transcription-count metrics. NULL-safe for legacy rows with no source."""
+    return func.coalesce(TranscriptionRequest.source, "") != "translation"
 
 
 def _start_of_today_utc() -> datetime:
@@ -292,23 +302,27 @@ async def get_user(
     today_start = _start_of_today_utc()
     month_start = _start_of_current_month_utc()
     total_count = db.query(func.count(TranscriptionRequest.id)).filter(
-        TranscriptionRequest.user_id == user.id
+        TranscriptionRequest.user_id == user.id,
+        _excludes_translation(),
     ).scalar() or 0
     today_count = db.query(func.count(TranscriptionRequest.id)).filter(
         TranscriptionRequest.user_id == user.id,
         TranscriptionRequest.created_at >= today_start,
         TranscriptionRequest.status != "failed",
+        _excludes_translation(),
     ).scalar() or 0
     month_count = db.query(func.count(TranscriptionRequest.id)).filter(
         TranscriptionRequest.user_id == user.id,
         TranscriptionRequest.created_at >= month_start,
         TranscriptionRequest.status != "failed",
+        _excludes_translation(),
     ).scalar() or 0
     today_api_count = db.query(func.count(TranscriptionRequest.id)).filter(
         TranscriptionRequest.user_id == user.id,
         TranscriptionRequest.created_at >= today_start,
         TranscriptionRequest.api_key_id.isnot(None),
         TranscriptionRequest.status != "failed",
+        _excludes_translation(),
     ).scalar() or 0
 
     usage = UserUsageInfo(
@@ -1373,10 +1387,6 @@ async def admin_delete_key(
 # --- Settings: transcription provider ----------------------------------------
 
 _PROVIDER_META = {
-    "whisper": {
-        "label": "Whisper (محلي)",
-        "description": "نموذج Whisper يعمل داخل السيرفر — جودة عالية لكن أبطأ ويستهلك موارد كبيرة.",
-    },
     "speechmatics": {
         "label": "Speechmatics",
         "description": "ASR متخصص (سحابي) — سريع، دقّة عربية ممتازة، timestamps دقيقة. يحتاج مفتاح SP.",
@@ -1579,7 +1589,9 @@ async def test_transcription_provider(
         duration_ms=elapsed_ms,
         audio_seconds=round(audio_duration, 2),
         text=text,
-        language=result.get("language"),
+        # Normalize to a bare ISO code so the provider-test panel shows "en"
+        # rather than a provider's raw "english"/"auto" (matches build_response).
+        language=text_analyzer.to_iso_code(result.get("language")),
         word_count=len(text.split()) if text else 0,
         segment_count=len(segments),
     )

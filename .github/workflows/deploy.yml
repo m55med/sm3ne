@@ -29,9 +29,9 @@ jobs:
               docker compose up -d --build
             else
               echo "Code-only change — hot-updating files..."
-              docker cp /root/bisawtak/backend/main.py whisper-api:/app/main.py
-              docker cp /root/bisawtak/backend/app/. whisper-api:/app/app/
-              docker restart whisper-api
+              docker cp /root/bisawtak/backend/main.py bisawtak-api:/app/main.py
+              docker cp /root/bisawtak/backend/app/. bisawtak-api:/app/app/
+              docker restart bisawtak-api
             fi
 
             echo "Deploy complete!"

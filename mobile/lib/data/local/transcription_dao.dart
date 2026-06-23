@@ -70,6 +70,18 @@ class TranscriptionDao {
     return db.delete('transcriptions', where: 'id = ?', whereArgs: [id]);
   }
 
+  /// Persists the cached Arabic [translation] for a row so re-opening the
+  /// result reuses it instead of calling (and re-charging) the translate API.
+  Future<int> updateTranslation(int id, String translation) async {
+    final db = await LocalDatabase.instance;
+    return db.update(
+      'transcriptions',
+      {'translation': translation},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   /// Removes every locally cached transcription. Used on logout / account
   /// switch to prevent the next user from seeing the previous user's data.
   Future<int> deleteAll() async {

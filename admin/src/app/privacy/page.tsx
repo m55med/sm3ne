@@ -140,13 +140,10 @@ export default function PrivacyPolicyAr() {
           </p>
           <ul className="list-disc pe-6 space-y-1">
             <li>
-              <b>OpenAI Whisper</b> (يعمل على خوادمنا الخاصة — الصوت لا يخرج
-              منها).
-            </li>
-            <li>
               <b>Speechmatics</b> · <b>Google Gemini</b> · <b>Groq</b> ·{" "}
-              <b>AssemblyAI</b> — لكل واحد منهم سياسة خصوصية خاصة. الصوت
-              يُحذف من خوادمهم بعد التفريغ وفق سياساتهم المعلنة.
+              <b>AssemblyAI</b> — مزوّدو تفريغ خارجيون، لكل واحد منهم سياسة
+              خصوصية خاصة. الصوت يُحذف من خوادمهم بعد التفريغ وفق سياساتهم
+              المعلنة.
             </li>
             <li>
               <b>Firebase</b> (Google): تحليلات وأعطال — لا يُرسَل الصوت ولا

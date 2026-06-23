@@ -2,7 +2,7 @@ const features = [
   {
     icon: "🎯",
     title: "دقة عالية",
-    description: "مدعوم بنموذج Whisper Large من OpenAI لأعلى دقة في تحويل الصوت إلى نص",
+    description: "مدعوم بأحدث نماذج الذكاء الاصطناعي للتفريغ لأعلى دقة في تحويل الصوت إلى نص",
   },
   {
     icon: "🌍",

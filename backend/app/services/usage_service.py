@@ -81,12 +81,6 @@ def invalidate_free_plan_cache() -> None:
 
 # Hard-coded free-tier hints. Shown as text in the dashboard — informational only.
 FREE_TIER: dict[str, dict] = {
-    "whisper": {
-        "label": "محلي — لا حدّ خارجي",
-        "limit_text": "بدون حد خارجي (محدود بموارد السيرفر فقط)",
-        "billing_unit": "—",
-        "has_remote_usage": False,
-    },
     "speechmatics": {
         "label": "Speechmatics Free Plan",
         "limit_text": "8 ساعات / شهر مجاناً (Batch ASR)",

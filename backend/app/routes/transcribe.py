@@ -29,7 +29,8 @@ from app.auth.deps import check_daily_quota, check_rpm_limit, get_user_or_api_ke
 from app.core.config import RATE_LIMIT, limiter
 from app.db.database import get_db
 from app.db.models import TranscriptionRequest, User
-from app.schemas.transcribe import ClientLogIn
+from app.schemas.transcribe import ClientLogIn, TranslateIn, TranslateOut
+from app.services import translation_service
 from app.services.file_validation import validate_audio_upload
 from app.services.subscription_service import get_active_subscription, get_user_plan
 from app.services.text_analyzer import LANG_NAMES
@@ -344,3 +345,87 @@ async def log_client_transcription(
         "was_trimmed": False,
         "provider_used": "client_side",
     })
+
+
+@router.post("/transcriptions/translate", response_model=TranslateOut)
+@limiter.limit(RATE_LIMIT)
+async def translate_transcription(
+    request: Request,
+    payload: TranslateIn,
+    user: User = Depends(get_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Translate a transcript into Arabic.
+
+    The server never stores transcript text (privacy), so the client sends the
+    text to translate inline. Each successful translation costs ONE daily-quota
+    unit — recorded as a ``source='translation'`` usage row (the same mechanism
+    the daily quota already SUMs). The credit is consumed only on success: if the
+    translation provider fails we never write the row, so the user isn't charged.
+    """
+    text = payload.text.strip()
+    if not text:
+        # Whitespace-only input: clean 400 instead of burning a provider call.
+        raise HTTPException(400, "لا يوجد نص لترجمته.")
+
+    # Defence-in-depth: the app hides the button for Arabic, but a non-default
+    # client could still call this. Arabic→Arabic is a no-op, so we return the
+    # text unchanged and charge NOTHING (no provider call, no usage row).
+    if payload.source_lang and payload.source_lang.strip().lower().startswith("ar"):
+        return TranslateOut(translated_text=text, target_lang="ar", quota_cost=0)
+
+    check_rpm_limit(request, user, db)
+    plan = getattr(request.state, "plan", None) or get_user_plan(db, user.id)
+    # One credit per translation. Raises 429 if the user is out of daily quota.
+    check_daily_quota(request, user, db, incoming_cost=1)
+
+    if not translation_service.is_configured():
+        raise HTTPException(503, "Translation is temporarily unavailable.")
+
+    try:
+        translated = await translation_service.translate_to_arabic(
+            text, source_lang=payload.source_lang
+        )
+    except Exception:
+        # Never echo the provider's error; the credit is NOT charged (no row).
+        logger.exception("translation failed")
+        raise HTTPException(502, "Translation failed. Please try again later.")
+
+    # Deduct the credit by recording a usage row. No transcript text is stored.
+    api_key = getattr(request.state, "api_key", None)
+    sub = get_active_subscription(db, user.id)
+    plan_source = _resolve_plan_source(sub, plan)
+    today = _today_start_utc()
+    daily_used = db.query(
+        func.coalesce(func.sum(func.coalesce(TranscriptionRequest.quota_cost, 1)), 0)
+    ).filter(
+        TranscriptionRequest.user_id == user.id,
+        TranscriptionRequest.created_at >= today,
+        TranscriptionRequest.status != "failed",
+    ).scalar() or 0
+
+    row = TranscriptionRequest(
+        user_id=user.id,
+        api_key_id=api_key.id if api_key else None,
+        filename=None,
+        duration_seconds=0,
+        processed_seconds=0,
+        language="ar",
+        word_count=_word_count(translated),
+        was_trimmed=False,
+        status="completed",
+        source="translation",
+        is_live_recording=False,
+        plan_name_at_request=plan.name if plan else "free",
+        plan_source_at_request=plan_source,
+        daily_limit_at_request=plan.daily_request_limit if plan else None,
+        monthly_limit_at_request=plan.monthly_request_limit if plan else None,
+        daily_used_at_request=daily_used,  # units used BEFORE this translation
+        provider_used="gemini-translate",
+        model_used=None,
+        quota_cost=1,
+    )
+    db.add(row)
+    db.commit()
+
+    return TranslateOut(translated_text=translated, target_lang="ar", quota_cost=1)

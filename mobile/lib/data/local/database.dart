@@ -33,7 +33,7 @@ class LocalDatabase {
     final path = join(await getDatabasesPath(), 'bisawtak.db');
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE transcriptions (
@@ -52,7 +52,8 @@ class LocalDatabase {
             original_filename TEXT,
             created_at TEXT NOT NULL,
             provider_used TEXT,
-            is_restored INTEGER DEFAULT 0
+            is_restored INTEGER DEFAULT 0,
+            translation TEXT
           )
         ''');
         // Unique index on server_request_id so history-sync can upsert rows
@@ -110,6 +111,13 @@ class LocalDatabase {
             'CREATE UNIQUE INDEX IF NOT EXISTS idx_txn_server_request_id '
             'ON transcriptions(server_request_id) '
             'WHERE server_request_id IS NOT NULL',
+          );
+        }
+        // v3 → v4: cache the on-demand Arabic translation so re-opening a result
+        // never re-charges a daily credit.
+        if (oldVersion < 4) {
+          await db.execute(
+            "ALTER TABLE transcriptions ADD COLUMN translation TEXT",
           );
         }
       },

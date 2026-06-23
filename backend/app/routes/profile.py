@@ -4,6 +4,7 @@ import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth.jwt import get_current_user
@@ -307,7 +308,12 @@ async def my_transcriptions(
     Defaults match support tickets (50 per page). Capped at 200 so a single
     request can't fan out into an unbounded JSON serialization.
     """
-    q = db.query(TranscriptionRequest).filter(TranscriptionRequest.user_id == user.id)
+    # Exclude 'translation' usage rows: they're quota-accounting entries for the
+    # translate feature, not real transcriptions, and have no transcript to show.
+    q = db.query(TranscriptionRequest).filter(
+        TranscriptionRequest.user_id == user.id,
+        func.coalesce(TranscriptionRequest.source, "") != "translation",
+    )
     total = q.count()
     rows = (
         q.order_by(TranscriptionRequest.created_at.desc())

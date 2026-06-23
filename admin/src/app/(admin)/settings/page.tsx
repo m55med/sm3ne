@@ -549,7 +549,6 @@ function UsageStat({ label, value }: { label: string; value: number }) {
 
 function labelFor(name: TranscriptionProvider): string {
   const map: Record<TranscriptionProvider, string> = {
-    whisper: "Whisper (محلي)",
     speechmatics: "Speechmatics",
     gemini: "Gemini",
     groq: "Groq",

@@ -1,6 +1,5 @@
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,18 +12,39 @@ load_dotenv(env_path)
 
 logger = logging.getLogger(__name__)
 
-# Whisper
-MODEL_NAME = os.getenv("WHISPER_MODEL", "large-v3")
 RATE_LIMIT = os.getenv("RATE_LIMIT", "10/minute")
-MAX_WORKERS = int(os.getenv("WORKERS", "3"))
 ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".opus", ".flac", ".webm", ".mp4", ".aac", ".wma"}
+
+# -----------------------------------------------------------------------------
+# Transcription language mode.
+#
+# The default is AUTOMATIC language detection: a voice note spoken in English /
+# French / any language is transcribed in THAT language, not forced to Arabic.
+# Every provider's `*_LANGUAGE` env var therefore defaults to "auto".
+#
+# An operator can still PIN a language by setting the env var to an ISO 639-1
+# code (e.g. SPEECHMATICS_LANGUAGE=ar) — that forces every request to that
+# language. The sentinels below all mean "auto-detect" so the pin can be
+# disabled without a code change.
+# -----------------------------------------------------------------------------
+_AUTO_LANGUAGE_SENTINELS = {"", "auto", "none", "detect", "auto-detect"}
+
+
+def normalize_language(value: str | None) -> str | None:
+    """Map a configured language value to a pinned ISO code, or None to mean
+    auto-detect. Empty / 'auto' / 'none' / 'detect' all map to None so the
+    per-provider language pin can be turned off purely via configuration."""
+    if value is None:
+        return None
+    v = value.strip()
+    return None if v.lower() in _AUTO_LANGUAGE_SENTINELS else v
 
 # Speechmatics (third-party ASR provider — much faster than local Whisper)
 SPEECHMATICS_API_KEY = os.getenv("SP", "").strip()
 SPEECHMATICS_BASE_URL = os.getenv(
     "SPEECHMATICS_BASE_URL", "https://eu1.asr.api.speechmatics.com/v2"
 ).strip().rstrip("/")
-SPEECHMATICS_LANGUAGE = os.getenv("SPEECHMATICS_LANGUAGE", "ar").strip()
+SPEECHMATICS_LANGUAGE = os.getenv("SPEECHMATICS_LANGUAGE", "auto").strip()
 SPEECHMATICS_OPERATING_POINT = os.getenv("SPEECHMATICS_OPERATING_POINT", "enhanced").strip()
 SPEECHMATICS_POLL_INTERVAL = float(os.getenv("SPEECHMATICS_POLL_INTERVAL", "2.0"))
 SPEECHMATICS_TIMEOUT_SECONDS = int(os.getenv("SPEECHMATICS_TIMEOUT_SECONDS", "600"))
@@ -35,14 +55,20 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip()
 GEMINI_BASE_URL = os.getenv(
     "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
 ).strip().rstrip("/")
-GEMINI_LANGUAGE_HINT = os.getenv("GEMINI_LANGUAGE_HINT", "ar").strip()
+GEMINI_LANGUAGE_HINT = os.getenv("GEMINI_LANGUAGE_HINT", "auto").strip()
 GEMINI_INLINE_MAX_BYTES = int(os.getenv("GEMINI_INLINE_MAX_BYTES", str(15 * 1024 * 1024)))
+# Lighter Gemini model used as a fallback for text translation when the primary
+# (GEMINI_MODEL) returns a transient 503 "model overloaded". Text-only work, so
+# the lite model is a perfectly good safety net.
+GEMINI_TRANSLATION_FALLBACK_MODEL = os.getenv(
+    "GEMINI_TRANSLATION_FALLBACK_MODEL", "gemini-flash-lite-latest"
+).strip()
 
 # Groq (Whisper hosted on Groq's LPU — fastest Whisper inference available)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").strip().rstrip("/")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "whisper-large-v3-turbo").strip()
-GROQ_LANGUAGE = os.getenv("GROQ_LANGUAGE", "ar").strip()
+GROQ_LANGUAGE = os.getenv("GROQ_LANGUAGE", "auto").strip()
 
 # AssemblyAI (managed ASR with diarization + sentiment, generous free credit)
 ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY", "").strip()
@@ -50,15 +76,15 @@ ASSEMBLYAI_BASE_URL = os.getenv(
     "ASSEMBLYAI_BASE_URL", "https://api.assemblyai.com/v2"
 ).strip().rstrip("/")
 ASSEMBLYAI_MODEL = os.getenv("ASSEMBLYAI_MODEL", "universal").strip()
-ASSEMBLYAI_LANGUAGE = os.getenv("ASSEMBLYAI_LANGUAGE", "ar").strip()
+ASSEMBLYAI_LANGUAGE = os.getenv("ASSEMBLYAI_LANGUAGE", "auto").strip()
 ASSEMBLYAI_POLL_INTERVAL = float(os.getenv("ASSEMBLYAI_POLL_INTERVAL", "2.0"))
 ASSEMBLYAI_TIMEOUT_SECONDS = int(os.getenv("ASSEMBLYAI_TIMEOUT_SECONDS", "600"))
 
-# Provider selection: "speechmatics" | "gemini" | "groq" | "assemblyai" | "whisper".
-# Auto-pick: prefer speechmatics > gemini > groq > assemblyai > whisper based on
+# Provider selection: "speechmatics" | "gemini" | "groq" | "assemblyai".
+# Auto-pick: prefer speechmatics > gemini > groq > assemblyai based on
 # which keys are present.
 _provider_env = os.getenv("TRANSCRIPTION_PROVIDER", "").strip().lower()
-if _provider_env in ("speechmatics", "gemini", "groq", "assemblyai", "whisper"):
+if _provider_env in ("speechmatics", "gemini", "groq", "assemblyai"):
     TRANSCRIPTION_PROVIDER = _provider_env
 elif SPEECHMATICS_API_KEY:
     TRANSCRIPTION_PROVIDER = "speechmatics"
@@ -69,7 +95,7 @@ elif GROQ_API_KEY:
 elif ASSEMBLYAI_API_KEY:
     TRANSCRIPTION_PROVIDER = "assemblyai"
 else:
-    TRANSCRIPTION_PROVIDER = "whisper"
+    TRANSCRIPTION_PROVIDER = "speechmatics"
 
 # -----------------------------------------------------------------------------
 # Database  (required — no insecure default)
@@ -236,8 +262,6 @@ CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 # redis://host:6379/0) so limits are shared.
 # -----------------------------------------------------------------------------
 RATE_LIMIT_STORAGE_URI = os.getenv("RATE_LIMIT_STORAGE_URI", "").strip()
-
-executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 
 def _rate_limit_key(request):

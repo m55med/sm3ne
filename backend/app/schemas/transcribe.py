@@ -43,3 +43,20 @@ class ClientLogIn(BaseModel):
         if isinstance(v, str):
             return _SOURCE_ALIASES.get(v, v)
         return v
+
+
+class TranslateIn(BaseModel):
+    """Payload for ``POST /transcriptions/translate``.
+
+    The server never persists transcript text (privacy), so the client sends
+    the text to translate inline.
+    """
+
+    text: str = Field(min_length=1, max_length=50_000)
+    source_lang: str | None = Field(default=None, max_length=10)
+
+
+class TranslateOut(BaseModel):
+    translated_text: str
+    target_lang: str = "ar"
+    quota_cost: int

@@ -43,7 +43,7 @@
 | Diagnostics → Crash Data | ✓ | ✗ | ✗ | App Functionality | Firebase Crashlytics |
 
 **مش متجمّع / محلي بس:** نص التفريغ (يُخزَّن على الجهاز SQLite فقط، مش على السيرفر) · صوت on-device STT (مايخرجش من الجهاز).
-**أطراف ثالثة تستقبل الصوت (معالِجات تفريغ، مش tracking):** Speechmatics · Google Gemini · Groq · AssemblyAI · (Whisper محلي على سيرفرنا) · Telegram (لبوت `@bisawtikbot` فقط).
+**أطراف ثالثة تستقبل الصوت (معالِجات تفريغ، مش tracking):** Speechmatics · Google Gemini · Groq · AssemblyAI · Telegram (لبوت `@bisawtikbot` فقط).
 
 ---
 

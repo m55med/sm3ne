@@ -22,6 +22,10 @@ class Transcription {
   // so the UI shows a "السجل مستعاد — النص غير محفوظ على الخادم" hint instead
   // of an empty body.
   final bool isRestored;
+  // Cached Arabic translation of [text], produced on demand by the server
+  // translate endpoint. Cached locally so re-opening the result never re-charges
+  // a daily credit. Null until the user taps "ترجمة" at least once.
+  final String? translation;
 
   Transcription({
     this.id,
@@ -40,6 +44,7 @@ class Transcription {
     required this.createdAt,
     this.providerUsed,
     this.isRestored = false,
+    this.translation,
   });
 
   bool get isClientSide => providerUsed == 'client_side';
@@ -64,6 +69,29 @@ class Transcription {
         createdAt: createdAt,
         providerUsed: providerUsed,
         isRestored: isRestored,
+        translation: translation,
+      );
+
+  /// Returns a copy carrying a cached Arabic [translation]. Used after the
+  /// translate endpoint succeeds so the result screen can render and persist it.
+  Transcription withTranslation(String translation) => Transcription(
+        id: id,
+        serverRequestId: serverRequestId,
+        text: text,
+        language: language,
+        languageName: languageName,
+        duration: duration,
+        wordCount: wordCount,
+        charCount: charCount,
+        wasTrimmed: wasTrimmed,
+        segmentsJson: segmentsJson,
+        source: source,
+        sourceApp: sourceApp,
+        originalFilename: originalFilename,
+        createdAt: createdAt,
+        providerUsed: providerUsed,
+        isRestored: isRestored,
+        translation: translation,
       );
 
   factory Transcription.fromApiResponse(Map<String, dynamic> json, {String source = 'uploaded', String? sourceApp}) {
@@ -171,6 +199,7 @@ class Transcription {
       'created_at': createdAt,
       'provider_used': providerUsed,
       'is_restored': isRestored ? 1 : 0,
+      'translation': translation,
     };
   }
 
@@ -192,6 +221,7 @@ class Transcription {
       createdAt: map['created_at'] ?? '',
       providerUsed: map['provider_used'],
       isRestored: map['is_restored'] == 1,
+      translation: map['translation'],
     );
   }
 }

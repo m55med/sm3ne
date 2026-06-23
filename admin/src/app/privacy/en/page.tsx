@@ -148,14 +148,10 @@ export default function PrivacyPolicyEn() {
           </p>
           <ul className="list-disc pl-6 space-y-1">
             <li>
-              <b>OpenAI Whisper</b> (runs on our own servers — audio never
-              leaves them).
-            </li>
-            <li>
               <b>Speechmatics</b>, <b>Google Gemini</b>, <b>Groq</b>,{" "}
-              <b>AssemblyAI</b> — each has its own privacy policy. Audio is
-              deleted from their servers post-transcription per their
-              stated policies.
+              <b>AssemblyAI</b> — external transcription providers, each with
+              its own privacy policy. Audio is deleted from their servers
+              post-transcription per their stated policies.
             </li>
             <li>
               <b>Firebase</b> (Google): analytics and crash reports — neither

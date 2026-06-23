@@ -91,7 +91,8 @@ export type RequestSource =
   | "recording"
   | "share"
   | "api"
-  | "telegram";
+  | "telegram"
+  | "translation";
 
 export interface RequestItem {
   id: number;
@@ -260,7 +261,6 @@ export type PlanCreateBody = Omit<PlanAdminItem, "id" | "subscriber_count">;
 export type PlanUpdateBody = Partial<Omit<PlanAdminItem, "id" | "name" | "subscriber_count">>;
 
 export type TranscriptionProvider =
-  | "whisper"
   | "speechmatics"
   | "gemini"
   | "groq"

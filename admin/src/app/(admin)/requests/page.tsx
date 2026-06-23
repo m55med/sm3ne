@@ -53,6 +53,7 @@ const REQUEST_SOURCE_META: Record<
   share: { label: "التطبيق — مشاركة", icon: "🔗", variant: "outline" },
   api: { label: "API", icon: "🔑", variant: "secondary" },
   telegram: { label: "تيليجرام", icon: "💬", variant: "default" },
+  translation: { label: "ترجمة", icon: "🌐", variant: "secondary" },
 };
 
 const SOURCE_FILTERS: { value: string; label: string }[] = [
@@ -62,6 +63,7 @@ const SOURCE_FILTERS: { value: string; label: string }[] = [
   { value: "share", label: "التطبيق — مشاركة" },
   { value: "api", label: "API" },
   { value: "telegram", label: "تيليجرام" },
+  { value: "translation", label: "ترجمة" },
 ];
 
 // `client_side` rows are the on-device STT path — no audio uploaded, no

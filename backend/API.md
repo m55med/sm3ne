@@ -285,9 +285,8 @@ Response is the same as `POST /keys`. Admins can also `GET /admin/keys`, `PUT /a
 
 | Variable | Default | Description |
 |---|---|---|
-| `WHISPER_MODEL` | `large-v3` | Whisper model |
+| `TRANSCRIPTION_PROVIDER` | `speechmatics` | Active ASR provider: `speechmatics` \| `gemini` \| `groq` \| `assemblyai` |
 | `RATE_LIMIT` | `10/minute` | Max requests per IP |
-| `WORKERS` | `3` | Concurrent transcription threads |
 | `SECRET_KEY` | — | JWT signing key (change in production!) |
 | `TOKEN_EXPIRE_MINUTES` | `1440` | Token expiry (default 24h) |
 

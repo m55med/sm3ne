@@ -2,7 +2,7 @@
 into the public API response shape: language name resolution, punctuation
 counts, segment normalization, and overall stats (char/word/segment counts).
 
-Provider-specific code lives elsewhere (whisper_service, gemini_service, ...);
+Provider-specific code lives elsewhere (gemini_service, groq_service, ...);
 this module is provider-agnostic and only consumes the normalized dict shape.
 """
 
@@ -36,17 +36,75 @@ _WORD_RE = re.compile(r"[\w؀-ۿݐ-ݿ]+", re.UNICODE)
 # Sentence boundary: Western or Arabic terminator, optionally followed by space.
 _SENTENCE_SPLIT_RE = re.compile(r"[\.!\?؟۔]+\s*")
 
+# Full Whisper language set (ISO 639-1 code → English name). Auto-detection can
+# return ANY of these, so the map is comprehensive — both to display a proper
+# name and to reverse full-name detections (e.g. Groq's "azerbaijani") back to a
+# short code that fits the VARCHAR(10) `language` column.
 LANG_NAMES = {
-    "ar": "Arabic", "en": "English", "fr": "French", "de": "German",
-    "es": "Spanish", "it": "Italian", "pt": "Portuguese", "ru": "Russian",
-    "zh": "Chinese", "ja": "Japanese", "ko": "Korean", "tr": "Turkish",
-    "nl": "Dutch", "pl": "Polish", "sv": "Swedish", "da": "Danish",
-    "no": "Norwegian", "fi": "Finnish", "cs": "Czech", "ro": "Romanian",
-    "hu": "Hungarian", "el": "Greek", "he": "Hebrew", "hi": "Hindi",
-    "th": "Thai", "uk": "Ukrainian", "vi": "Vietnamese", "id": "Indonesian",
-    "ms": "Malay", "fa": "Persian", "ur": "Urdu", "bn": "Bengali",
-    "ta": "Tamil", "te": "Telugu", "ml": "Malayalam", "sw": "Swahili",
+    "en": "English", "zh": "Chinese", "de": "German", "es": "Spanish",
+    "ru": "Russian", "ko": "Korean", "fr": "French", "ja": "Japanese",
+    "pt": "Portuguese", "tr": "Turkish", "pl": "Polish", "ca": "Catalan",
+    "nl": "Dutch", "ar": "Arabic", "sv": "Swedish", "it": "Italian",
+    "id": "Indonesian", "hi": "Hindi", "fi": "Finnish", "vi": "Vietnamese",
+    "he": "Hebrew", "uk": "Ukrainian", "el": "Greek", "ms": "Malay",
+    "cs": "Czech", "ro": "Romanian", "da": "Danish", "hu": "Hungarian",
+    "ta": "Tamil", "no": "Norwegian", "th": "Thai", "ur": "Urdu",
+    "hr": "Croatian", "bg": "Bulgarian", "lt": "Lithuanian", "la": "Latin",
+    "mi": "Maori", "ml": "Malayalam", "cy": "Welsh", "sk": "Slovak",
+    "te": "Telugu", "fa": "Persian", "lv": "Latvian", "bn": "Bengali",
+    "sr": "Serbian", "az": "Azerbaijani", "sl": "Slovenian", "kn": "Kannada",
+    "et": "Estonian", "mk": "Macedonian", "br": "Breton", "eu": "Basque",
+    "is": "Icelandic", "hy": "Armenian", "ne": "Nepali", "mn": "Mongolian",
+    "bs": "Bosnian", "kk": "Kazakh", "sq": "Albanian", "sw": "Swahili",
+    "gl": "Galician", "mr": "Marathi", "pa": "Punjabi", "si": "Sinhala",
+    "km": "Khmer", "sn": "Shona", "yo": "Yoruba", "so": "Somali",
+    "af": "Afrikaans", "oc": "Occitan", "ka": "Georgian", "be": "Belarusian",
+    "tg": "Tajik", "sd": "Sindhi", "gu": "Gujarati", "am": "Amharic",
+    "yi": "Yiddish", "lo": "Lao", "uz": "Uzbek", "fo": "Faroese",
+    "ht": "Haitian Creole", "ps": "Pashto", "tk": "Turkmen", "nn": "Nynorsk",
+    "mt": "Maltese", "sa": "Sanskrit", "lb": "Luxembourgish", "my": "Myanmar",
+    "bo": "Tibetan", "tl": "Tagalog", "mg": "Malagasy", "as": "Assamese",
+    "tt": "Tatar", "haw": "Hawaiian", "ln": "Lingala", "ha": "Hausa",
+    "ba": "Bashkir", "jw": "Javanese", "su": "Sundanese", "yue": "Cantonese",
 }
+
+
+# Reverse lookup: full English language name (lowercased) → ISO 639-1 code.
+# Whisper/Groq verbose_json returns the DETECTED language as a full name
+# ("english", "arabic", "french") rather than a code, so we normalize it back
+# to a code for consistent storage, admin filtering, and lang_name display.
+_NAME_TO_CODE = {name.lower(): code for code, name in LANG_NAMES.items()}
+
+
+def to_iso_code(language: str | None) -> str:
+    """Normalize any provider's language value to a lowercase ISO 639-1 code.
+
+    Handles three shapes providers return:
+      * already a code ("ar", "en")            → unchanged
+      * a full English name ("arabic", "english") → mapped via _NAME_TO_CODE
+      * a code with a region/script suffix ("en_us", "ar-EG") → base code
+
+    Unknown values fall through lowercased so nothing is silently dropped.
+    """
+    if not language:
+        return "unknown"
+    v = language.strip().lower()
+    if not v or v == "auto":
+        return "unknown"
+    if v in LANG_NAMES:  # already a known code
+        return v
+    if v in _NAME_TO_CODE:  # a full English name
+        return _NAME_TO_CODE[v]
+    # Strip a region/script suffix like en_us / ar-eg and retry.
+    base = re.split(r"[-_]", v, maxsplit=1)[0]
+    if base in LANG_NAMES:
+        return base
+    if base in _NAME_TO_CODE:
+        return _NAME_TO_CODE[base]
+    # Unknown value — clamp to the DB column width (VARCHAR(10)) so an exotic
+    # provider string can never overflow `transcription_requests.language` and
+    # 500 the request after a paid transcription already succeeded.
+    return (base or "unknown")[:10]
 
 
 def analyze_punctuation(text: str) -> dict:
@@ -129,7 +187,10 @@ def extended_analysis(text: str, duration_seconds: float = 0.0, top_n: int = 15)
 
 def build_response(result: dict) -> dict:
     text = result.get("text", "").strip()
-    language = result.get("language", "unknown")
+    # Providers report the detected language in different shapes (ISO code, full
+    # name, or code+region). Normalize to a bare ISO 639-1 code so storage,
+    # admin filters, and the name lookup below all stay consistent.
+    language = to_iso_code(result.get("language"))
     segments = build_segments(result.get("segments", []))
 
     return {

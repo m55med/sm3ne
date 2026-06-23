@@ -183,6 +183,41 @@ class TranscriptionRepository {
   Future<void> deleteLocal(int id) => _dao.delete(id);
   Future<void> deleteAllLocal() => _dao.deleteAll();
 
+  /// Translates [t]'s transcript into Arabic via the server (costs ONE daily
+  /// credit). The result is cached on the local row so re-opening never
+  /// re-charges. Returns the updated [Transcription] carrying [translation].
+  ///
+  /// Throws [TranslationException] with a friendly Arabic message on any
+  /// failure (out of quota, network, provider down) — the credit is only
+  /// charged server-side on success, so a thrown error means no charge.
+  Future<Transcription> translate(Transcription t) async {
+    if (t.text.trim().isEmpty) {
+      throw TranslationException('لا يوجد نص لترجمته.');
+    }
+    try {
+      final resp = await _api.dio.post(
+        '/transcriptions/translate',
+        data: {
+          'text': t.text,
+          if (t.language.isNotEmpty) 'source_lang': t.language,
+        },
+      );
+      final translated = (resp.data['translated_text'] ?? '').toString().trim();
+      if (translated.isEmpty) {
+        throw TranslationException('تعذّرت الترجمة. حاول مرة أخرى.');
+      }
+      // Persist the cache only for rows that exist locally (have an id).
+      if (t.id != null) {
+        await _dao.updateTranslation(t.id!, translated);
+      }
+      return t.withTranslation(translated);
+    } on TranslationException {
+      rethrow;
+    } catch (e) {
+      throw TranslationException(friendlyErrorMessage(e));
+    }
+  }
+
   /// Flushes on-device transcriptions the iOS Share Extension queued while the
   /// app was closed. Each queued entry is sent to `/transcriptions/log` (so the
   /// server history + admin dashboards stay complete and the row gets a real
@@ -263,4 +298,14 @@ class TranscriptionRepository {
     }
     return totalInserted;
   }
+}
+
+/// Thrown by [TranscriptionRepository.translate] carrying a friendly Arabic
+/// message suitable for direct display via a SnackBar.
+class TranslationException implements Exception {
+  final String message;
+  const TranslationException(this.message);
+
+  @override
+  String toString() => message;
 }

@@ -1,6 +1,6 @@
 # Bisawtak Backend — Complete Overview
 
-> A FastAPI service that turns audio files into transcribed Arabic/English text using Whisper, with user accounts, subscription plans, coupons, and an admin panel. This document explains the full mental model: every endpoint, what you send, what you get back, and how the pieces fit together. Use it as a reference or as a seed prompt for designing similar backends.
+> A FastAPI service that turns audio files into transcribed Arabic/English text using external ASR providers (Speechmatics, Google Gemini, Groq, AssemblyAI — with automatic failover), with user accounts, subscription plans, coupons, and an admin panel. This document explains the full mental model: every endpoint, what you send, what you get back, and how the pieces fit together. Use it as a reference or as a seed prompt for designing similar backends.
 
 ---
 
@@ -15,9 +15,9 @@
                           ┌───────────────┼─────────────────┐
                           ▼               ▼                 ▼
                   ┌─────────────┐ ┌───────────────┐ ┌──────────────┐
-                  │  SQLite DB  │ │ Whisper model │ │ ffmpeg utils │
-                  │ (users,     │ │ (large-v3,    │ │ (probe/trim  │
-                  │  requests,  │ │  GPU/CPU)     │ │  audio)      │
+                  │  SQLite DB  │ │ ASR providers │ │ ffmpeg utils │
+                  │ (users,     │ │ (Speechmatics │ │ (probe/trim  │
+                  │  requests,  │ │  +3 fallbacks)│ │  audio)      │
                   │  plans,     │ └───────────────┘ └──────────────┘
                   │  coupons)   │
                   └─────────────┘
@@ -28,13 +28,13 @@
 2. User uploads an **audio file** with the token
 3. Server checks the user's **plan** (free vs paid → max audio length)
 4. Server **trims** audio if it exceeds the limit
-5. **Whisper** transcribes → text + word-level timestamps + stats
+5. The active **ASR provider** transcribes → text + word-level timestamps + stats
 6. Server **logs the request** in DB and returns the result as JSON
 
 **Tech stack:**
 - **FastAPI** (Python web framework)
 - **SQLAlchemy** (ORM) + **SQLite** (DB)
-- **Whisper** (`large-v3` model) for speech-to-text
+- **External ASR providers** (Speechmatics / Gemini / Groq / AssemblyAI, with automatic failover) for speech-to-text
 - **ffmpeg** for audio probing/trimming
 - **JWT** (HS256) for auth
 - **slowapi** for rate limiting (default 10 req/min per IP)
@@ -349,7 +349,7 @@ curl -X POST https://voice.neojeen.com/transcribe \
 3. Probe duration with ffmpeg
 4. Look up user's plan → get `max_audio_seconds`
 5. If audio is longer → trim with ffmpeg, set `was_trimmed = true`
-6. Pass to Whisper → get raw segments with word timestamps
+6. Pass to the active ASR provider (with failover) → get raw segments with word timestamps
 7. Run text analyzer (counts chars, words, punctuation)
 8. Log a `TranscriptionRequest` row in DB
 9. Delete temp files
@@ -454,9 +454,8 @@ curl https://voice.neojeen.com/admin/stats -H "Authorization: Bearer $ADMIN_TOKE
 
 | Var | Default | Notes |
 |---|---|---|
-| `WHISPER_MODEL` | `large-v3` | Any Whisper checkpoint |
+| `TRANSCRIPTION_PROVIDER` | `speechmatics` | `speechmatics` \| `gemini` \| `groq` \| `assemblyai` |
 | `RATE_LIMIT` | `10/minute` | slowapi format |
-| `WORKERS` | `3` | Concurrent transcription threads |
 | `SECRET_KEY` | — | **Must be set in production** (JWT signing) |
 | `TOKEN_EXPIRE_MINUTES` | `1440` | 24 hours |
 
@@ -520,7 +519,7 @@ This backend is a **good template** for any "AI-as-a-service" SaaS. The reusable
 **The pattern in one sentence:**
 > *"Wrap an AI model behind FastAPI, gate it with JWT + plan limits, log every call, expose an admin panel, deploy with Docker, and the mobile/web client just hits one endpoint with a file."*
 
-Swap "Whisper transcribing audio" with any other model and you have:
+Swap "an ASR API transcribing audio" with any other model and you have:
 - Image background remover
 - PDF summarizer
 - Image upscaler

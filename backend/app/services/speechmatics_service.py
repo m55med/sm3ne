@@ -18,6 +18,7 @@ from app.core.config import (
     SPEECHMATICS_OPERATING_POINT,
     SPEECHMATICS_POLL_INTERVAL,
     SPEECHMATICS_TIMEOUT_SECONDS,
+    normalize_language,
 )
 
 
@@ -49,6 +50,23 @@ def default_model() -> str:
 _SENTENCE_END = {".", "?", "!", "؟", "…"}
 
 
+def _detect_language(results: list[dict], configured: str | None) -> str:
+    """Resolve the file-level language.
+
+    In auto mode `metadata.transcription_config.language` stays the literal
+    "auto", so the real detected language is read from the first word's
+    alternative (every word carries a `language` code). When a language was
+    pinned the config echo already holds it.
+    """
+    if configured not in (None, "", "auto", "unknown"):
+        return configured
+    for item in results:
+        alts = item.get("alternatives") or []
+        if item.get("type") == "word" and alts and alts[0].get("language"):
+            return alts[0]["language"]
+    return "unknown"
+
+
 def _auth_headers() -> dict:
     if not SPEECHMATICS_API_KEY:
         raise SpeechmaticsError("SP API key is not configured")
@@ -56,15 +74,28 @@ def _auth_headers() -> dict:
 
 
 def _job_config(language: str | None, model: str | None) -> dict:
-    return {
+    # None ⇒ auto-detect. Speechmatics enables language identification when the
+    # transcription_config.language is the literal "auto"; a pinned code (e.g.
+    # "ar") forces that language instead.
+    lang = normalize_language(language if language is not None else SPEECHMATICS_LANGUAGE)
+    config: dict = {
         "type": "transcription",
         "transcription_config": {
-            "language": (language or SPEECHMATICS_LANGUAGE),
+            "language": (lang or "auto"),
             "operating_point": (model or default_model()),
             "diarization": "none",
             "enable_entities": True,
         },
     }
+    if lang is None:
+        # Auto language ID: by default the job is REJECTED when no language is
+        # identified with high confidence. "allow" makes it transcribe in the
+        # best-guess language instead so a short/non-Arabic clip still returns a
+        # result in the detected language rather than failing or forcing Arabic.
+        # We intentionally do NOT constrain `expected_languages` — any supported
+        # language (English, French, ...) should be detectable.
+        config["language_identification_config"] = {"low_confidence_action": "allow"}
+    return config
 
 
 async def _submit_job(
@@ -133,9 +164,10 @@ def _to_whisper_dict(transcript: dict) -> dict:
     """
     metadata = transcript.get("metadata", {}) or {}
     tc = metadata.get("transcription_config", {}) or {}
-    language = tc.get("language", "unknown")
 
     results: list[dict[str, Any]] = transcript.get("results") or []
+
+    language = _detect_language(results, tc.get("language", "unknown"))
 
     segments: list[dict] = []
     cur_words: list[dict] = []

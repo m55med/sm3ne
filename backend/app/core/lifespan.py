@@ -1,16 +1,15 @@
 import secrets
 import string
-import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from sqlalchemy import text
 
-from app.core.config import executor, ADMIN_PASSWORD, ADMIN_EMAIL
+from app.core.config import ADMIN_PASSWORD, ADMIN_EMAIL
 from app.auth.password import hash_password
 from app.db.database import create_tables, SessionLocal
 from app.db.models import User, Plan
-from app.services import settings_service, whisper_service
+from app.services import settings_service
 
 
 _PUBLIC_ID_ALPHABET = string.ascii_letters + string.digits
@@ -415,18 +414,12 @@ def _seed_db():
 async def lifespan(app: FastAPI):
     create_tables()
     _seed_db()
-    # Preload the local Whisper model only when it's the currently selected provider
-    # in the DB. Speechmatics is remote, so skipping the load saves ~3GB RAM and
-    # startup time. The setting is admin-controllable at runtime — if it later
-    # switches to whisper, the model will lazy-load on first transcription.
+    # All transcription providers are remote APIs — there's no local model to
+    # preload. Just log which provider is active so the boot logs are useful.
     db = SessionLocal()
     try:
         active = settings_service.get_transcription_provider(db)
     finally:
         db.close()
-    if active == "whisper":
-        threading.Thread(target=whisper_service._ensure_model, daemon=True).start()
-    else:
-        print(f"Active transcription provider: {active} (Whisper preload skipped)")
+    print(f"Active transcription provider: {active}")
     yield
-    executor.shutdown(wait=False)

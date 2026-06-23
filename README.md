@@ -1,17 +1,17 @@
 # بصوتك - Bisawtak
 
-Speech-to-Text API powered by OpenAI Whisper Large v3.
+Speech-to-Text API powered by external ASR providers (Speechmatics, Google Gemini, Groq, AssemblyAI) with automatic failover.
 
 ## Project Structure
 
 ```
 sm3ne/
-├── backend/          # FastAPI + Whisper API
+├── backend/          # FastAPI transcription API
 │   ├── app/
 │   │   ├── auth/     # JWT authentication
 │   │   ├── core/     # Config, lifespan
 │   │   ├── routes/   # API endpoints
-│   │   └── services/ # Whisper & text analysis
+│   │   └── services/ # ASR providers & text analysis
 │   ├── main.py
 │   ├── Dockerfile
 │   └── docker-compose.yml

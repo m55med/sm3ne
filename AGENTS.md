@@ -17,8 +17,7 @@
 
 **الـ Providers الخارجية:**
 - Speechmatics (default ASR)
-- Gemini (fallback ASR)
-- OpenAI Whisper (local fallback)
+- Gemini · Groq · AssemblyAI (fallback ASR — failover تلقائي بينهم)
 - Apple Sign-In + Google Sign-In (social auth)
 - SMTP (forgot-password OTP)
 
@@ -387,7 +386,7 @@ mobile/
 
 ## 8. اللي قابل للنقاش — لا تعدّله بدون مناقشة
 
-- اختيار default transcription provider (`speechmatics > gemini > whisper`).
+- اختيار default transcription provider (`speechmatics > gemini > groq > assemblyai`).
 - مدة JWT (`TOKEN_EXPIRE_MINUTES=1440`).
 - صلاحية OTP و duration.
 - حدود الـ plans (موجودة في DB، لكن defaults في `PLAN_DEFAULTS` بـ `lifespan.py`).

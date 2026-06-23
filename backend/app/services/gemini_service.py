@@ -10,6 +10,8 @@ the Files API (upload → reference by URI in the generate call).
 """
 import asyncio
 import base64
+import json
+import logging
 import os
 import mimetypes
 
@@ -21,7 +23,30 @@ from app.core.config import (
     GEMINI_INLINE_MAX_BYTES,
     GEMINI_LANGUAGE_HINT,
     GEMINI_MODEL,
+    normalize_language,
 )
+
+logger = logging.getLogger(__name__)
+
+# Structured-output schema: we make Gemini return BOTH the detected language
+# code and the transcript, so we can record the real language (Gemini otherwise
+# returns plain text only, leaving us no machine-readable language). This is a
+# subset of OpenAPI 3.0 schema — the shape Gemini's `responseSchema` accepts.
+_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "language": {
+            "type": "string",
+            "description": "ISO 639-1 code of the spoken language, e.g. 'ar', 'en', 'fr'.",
+        },
+        "text": {
+            "type": "string",
+            "description": "Verbatim transcript in the detected language; never translated.",
+        },
+    },
+    "required": ["language", "text"],
+    "propertyOrdering": ["language", "text"],
+}
 
 
 class GeminiError(RuntimeError):
@@ -80,11 +105,20 @@ def _guess_mime(path: str) -> str:
 
 
 def _build_prompt(language: str | None) -> str:
-    lang = language or GEMINI_LANGUAGE_HINT
+    # None ⇒ auto-detect. We must NOT assert a language in that case — asserting
+    # 'ar' is exactly what made English/French audio come out Arabic.
+    if language:
+        spoken = f"The spoken language is '{language}'. "
+    else:
+        spoken = "First detect the spoken language. "
     return (
-        f"Transcribe the following audio verbatim. The spoken language is '{lang}'. "
-        "Return ONLY the transcribed text — no preamble, no explanation, no quotes, "
-        "no formatting. If the audio is silent or unintelligible, return an empty string."
+        "Transcribe the following audio VERBATIM in the SAME language that is "
+        "spoken — do NOT translate, summarize, or paraphrase. "
+        + spoken
+        + "Return ONLY a JSON object matching the schema: set \"language\" to the "
+        "ISO 639-1 code of the spoken language (e.g. \"ar\", \"en\", \"fr\") and "
+        "\"text\" to the exact transcript. If the audio is silent or "
+        "unintelligible, set \"text\" to an empty string."
     )
 
 
@@ -145,13 +179,62 @@ async def _upload_via_files_api(client: httpx.AsyncClient, path: str, mime: str)
     raise GeminiError("Files API processing timed out")
 
 
+def _parse_model_output(raw: str, pinned_language: str | None) -> tuple[str, str]:
+    """Extract ``(text, language_code)`` from the model's response string.
+
+    With structured output the model returns a JSON string like
+    ``{"language":"en","text":"..."}``. We parse it defensively: if the model
+    ever returns plain text (older models / a safety truncation), we fall back
+    to treating the whole string as the transcript and to the pinned language
+    or "unknown" so we never crash the request on a parse hiccup.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return "", (pinned_language or "unknown")
+    fallback_lang = pinned_language or "unknown"
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict) and "text" in obj:
+            text = str(obj.get("text") or "").strip()
+            lang = str(obj.get("language") or pinned_language or "unknown").strip()
+            return text, (lang or "unknown")
+    except ValueError:  # JSONDecodeError is a subclass of ValueError
+        logger.warning("Gemini returned non-JSON output; attempting to salvage")
+
+    # A (possibly truncated) JSON envelope must NOT be returned verbatim — that
+    # would leak `{"language":"en","text":"...` into the user's transcript.
+    if raw.lstrip().startswith("{"):
+        return _salvage_text_from_partial_json(raw), fallback_lang
+    # Genuinely plain text (older model / no JSON at all): use it as the transcript.
+    return raw, fallback_lang
+
+
+def _salvage_text_from_partial_json(raw: str) -> str:
+    """Best-effort extraction of the "text" value from a malformed/truncated JSON
+    envelope. Returns "" if it can't be recovered (better empty than leaking the
+    JSON scaffolding into the transcript)."""
+    marker = raw.find('"text"')
+    if marker == -1:
+        return ""
+    quote = raw.find('"', raw.find(":", marker) + 1)
+    if quote == -1:
+        return ""
+    try:
+        # raw_decode reads one JSON string starting at the opening quote and
+        # tolerates trailing bytes (e.g. a missing closing `}` after truncation).
+        value, _ = json.JSONDecoder().raw_decode(raw[quote:])
+        return str(value).strip()
+    except ValueError:
+        return ""
+
+
 def _to_whisper_dict(text: str, language: str | None, duration: float) -> dict:
-    """Wrap Gemini's plain-text output in the Whisper-shaped dict the rest of
-    the pipeline expects. Word timings aren't available, so we emit a single
-    catch-all segment spanning the audio.
+    """Wrap Gemini's output in the Whisper-shaped dict the rest of the pipeline
+    expects. Word timings aren't available, so we emit a single catch-all
+    segment spanning the audio.
     """
     text = (text or "").strip()
-    lang = (language or GEMINI_LANGUAGE_HINT or "unknown").lower()
+    lang = (language or "unknown").lower()
     segments = []
     if text:
         segments.append({
@@ -174,7 +257,9 @@ async def transcribe_from_path(
     size = os.path.getsize(path)
     if size <= 0:
         raise GeminiError("Audio file is empty")
-    prompt = _build_prompt(language)
+    # None ⇒ auto-detect; a pinned code forces that language in the prompt.
+    pinned_language = normalize_language(language if language is not None else GEMINI_LANGUAGE_HINT)
+    prompt = _build_prompt(pinned_language)
     chosen_model = model or default_model()
 
     # The GEMINI_INLINE_MAX_BYTES env var draws the line between an inline
@@ -199,7 +284,16 @@ async def transcribe_from_path(
 
         body = {
             "contents": [{"parts": parts}],
-            "generationConfig": {"temperature": 0, "responseMimeType": "text/plain"},
+            # Structured output: forces a JSON object carrying the detected
+            # language code alongside the transcript, so auto-detection produces
+            # a machine-readable language we can record.
+            "generationConfig": {
+                "temperature": 0,
+                "responseMimeType": "application/json",
+                "responseSchema": _RESPONSE_SCHEMA,
+                # Generous ceiling so a long transcript isn't truncated mid-JSON.
+                "maxOutputTokens": 8192,
+            },
         }
         resp = await client.post(
             f"{GEMINI_BASE_URL}/models/{chosen_model}:generateContent",
@@ -215,8 +309,15 @@ async def transcribe_from_path(
     try:
         candidate = data["candidates"][0]
         parts_out = candidate["content"]["parts"]
-        text = "".join(p.get("text", "") for p in parts_out)
+        raw = "".join(p.get("text", "") for p in parts_out)
     except (KeyError, IndexError, TypeError) as e:
         raise GeminiError(f"Unexpected Gemini response shape: {data}") from e
 
-    return _to_whisper_dict(text, language, duration)
+    # A MAX_TOKENS finish means the JSON envelope was cut off — raise so the
+    # dispatcher fails over to another provider rather than returning a partial
+    # transcript that lost its tail.
+    if candidate.get("finishReason") == "MAX_TOKENS":
+        raise GeminiError("Gemini response truncated (MAX_TOKENS); failing over")
+
+    text, detected_language = _parse_model_output(raw, pinned_language)
+    return _to_whisper_dict(text, detected_language, duration)

@@ -75,7 +75,7 @@ async def privacy_ar():
 </ul>
 
 <h2>3. مشاركة البيانات</h2>
-<p>لا نبيع ولا نؤجر بياناتك. نستخدم مقدمي خدمات مُعتمدين فقط (مثل OpenAI Whisper / Speechmatics) لمعالجة الصوت. هؤلاء المقدمون ملزمون بسياسات صارمة.</p>
+<p>لا نبيع ولا نؤجر بياناتك. نستخدم مقدمي خدمات تفريغ خارجيين مُعتمدين (Speechmatics و Google Gemini و Groq و AssemblyAI) لمعالجة الصوت. هؤلاء المقدمون ملزمون بسياسات صارمة.</p>
 
 <h2>4. حقوقك</h2>
 <ul>
@@ -203,7 +203,7 @@ async def privacy_en():
 </ul>
 
 <h2>3. Data Sharing</h2>
-<p>We do not sell or rent your data. We use approved service providers (e.g. OpenAI Whisper / Speechmatics) for audio processing. These providers are bound by strict policies.</p>
+<p>We do not sell or rent your data. We use approved external transcription providers (Speechmatics, Google Gemini, Groq, and AssemblyAI) for audio processing. These providers are bound by strict policies.</p>
 
 <h2>4. Your Rights</h2>
 <ul>

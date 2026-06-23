@@ -19,11 +19,10 @@ from app.db.models import AppSetting
 
 KEY_TRANSCRIPTION_PROVIDER = "transcription_provider"
 KEY_PROVIDER_ORDER = "transcription_provider_order"
-VALID_PROVIDERS = ("whisper", "speechmatics", "gemini", "groq", "assemblyai")
+VALID_PROVIDERS = ("speechmatics", "gemini", "groq", "assemblyai")
 
 # Default failover priority when the admin hasn't customized the order.
-# whisper is last on purpose — it's the always-available local safety net.
-DEFAULT_PROVIDER_ORDER = ("speechmatics", "gemini", "groq", "assemblyai", "whisper")
+DEFAULT_PROVIDER_ORDER = ("speechmatics", "gemini", "groq", "assemblyai")
 
 # Cache entries expire after this many seconds. Short enough that multi-worker
 # setups feel near-real-time after an admin change; long enough that the hot

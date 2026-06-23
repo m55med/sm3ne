@@ -37,13 +37,11 @@ from app.services import (
     groq_service,
     settings_service,
     speechmatics_service,
-    whisper_service,
 )
 
 logger = logging.getLogger(__name__)
 
 _SERVICE_BY_NAME = {
-    "whisper": whisper_service,
     "speechmatics": speechmatics_service,
     "gemini": gemini_service,
     "groq": groq_service,
@@ -86,7 +84,9 @@ def resolve_provider(db: Session, plan: Plan | None = None) -> str:
     for name in settings_service.get_provider_order(db):
         if avail.get(name, False):
             return name
-    return "whisper"
+    # Nothing is configured (no keys at all) — return the chosen provider so the
+    # caller surfaces a coherent provider error rather than a silent no-op.
+    return chosen
 
 
 def resolve_model(db: Session, provider: str, plan: Plan | None = None) -> str | None:
@@ -119,8 +119,6 @@ async def _call_provider(
         return await groq_service.transcribe_from_path(path, model=model)
     if provider == "assemblyai":
         return await assemblyai_service.transcribe_from_path(path, model=model)
-    if provider == "whisper":
-        return await whisper_service.transcribe_from_path(path, model=model)
     raise ValueError(f"Unknown provider '{provider}'")
 
 
@@ -133,9 +131,11 @@ def _failover_chain(db: Session, primary: str) -> list[str]:
     for p in [primary, *order]:
         if p not in chain and avail.get(p, False):
             chain.append(p)
-    # whisper is the always-available local safety net.
-    if not chain or "whisper" not in chain:
-        chain.append("whisper")
+    # No provider is configured (no API keys at all) — still attempt the primary
+    # so the request fails with a coherent provider error rather than an empty
+    # chain. There is no local fallback anymore.
+    if not chain:
+        chain.append(primary)
     return chain
 
 

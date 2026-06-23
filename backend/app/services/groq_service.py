@@ -13,6 +13,7 @@ from app.core.config import (
     GROQ_BASE_URL,
     GROQ_MODEL,
     GROQ_LANGUAGE,
+    normalize_language,
 )
 
 
@@ -89,7 +90,10 @@ async def transcribe_from_path(
 ) -> dict:
     filename = os.path.basename(path)
     chosen_model = model or default_model()
-    lang = language or GROQ_LANGUAGE
+    # None ⇒ auto-detect: we simply omit the `language` form field so Whisper
+    # runs its native language identification and transcribes in the spoken
+    # language. A pinned code (e.g. "ar") still forces that language.
+    lang = normalize_language(language if language is not None else GROQ_LANGUAGE)
 
     data = {
         "model": chosen_model,

@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
-from app.core.config import MODEL_NAME, limiter, CORS_ALLOWED_ORIGINS
+from app.core.config import limiter, CORS_ALLOWED_ORIGINS
 from app.core.lifespan import lifespan
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.routes.api_keys import router as api_keys_router
@@ -19,7 +19,6 @@ from app.routes.telegram import router as telegram_router
 from app.routes.telegram_webhook import router as telegram_webhook_router
 from app.routes.legal import router as legal_router
 from app.routes.diag import router as diag_router  # TEMP: share-intent diagnostics
-from app.services import whisper_service
 
 app = FastAPI(title="Bisawtak - Speech-to-Text API", version="2.0.0", lifespan=lifespan)
 
@@ -69,11 +68,9 @@ app.include_router(legal_router)
 @app.get(f"{API_PREFIX}/health")
 @app.get("/health")
 async def health():
-    if whisper_service.is_loading():
-        return {"status": "loading", "model": MODEL_NAME}
-    if not whisper_service.is_ready():
-        return {"status": "starting", "model": MODEL_NAME}
-    return {"status": "ready", "model": MODEL_NAME}
+    # Transcription runs entirely through remote API providers now, so the API
+    # is ready as soon as the ASGI app is up — there's no local model to load.
+    return {"status": "ready"}
 
 
 if __name__ == "__main__":
