@@ -57,3 +57,6 @@ mobile/android/key.properties
 testsprite_tests/tmp/config.json
 
 backend/venv/
+
+# JVM heap dumps (e.g. gradle OOM) — multi-GB binaries, never commit.
+*.hprof
