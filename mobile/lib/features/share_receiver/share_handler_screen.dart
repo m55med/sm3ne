@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bisawtak/config/design_tokens.dart';
 import 'package:bisawtak/core/stt/stt_orchestrator.dart';
 import 'package:bisawtak/data/models/transcription.dart';
+import 'package:bisawtak/data/repositories/transcription_repository.dart';
 import 'package:bisawtak/features/plans/plans_screen.dart' show currentSubscriptionProvider;
 import 'package:bisawtak/shared/utils/error_messages.dart';
 import 'package:bisawtak/shared/utils/file_validation.dart';
@@ -44,6 +45,10 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
   bool _processing = true;
   // True while the "higher quality" server re-transcription is in flight.
   bool _upgrading = false;
+  // On-demand Arabic translation state (cached on the row once fetched).
+  String? _translation;
+  bool _translating = false;
+  bool _showTranslation = true;
 
   @override
   void initState() {
@@ -92,6 +97,7 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
       ref.invalidate(currentSubscriptionProvider);
       setState(() {
         _result = result;
+        _translation = result.translation;
         _processing = false;
       });
     } catch (e) {
@@ -103,13 +109,18 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
     }
   }
 
-  Future<void> _copy() async {
-    if (_result == null) return;
+  Future<void> _copy() => _copyText(_result?.text ?? '', 'تم نسخ النص!');
+
+  Future<void> _copyTranslation() =>
+      _copyText(_translation ?? '', 'تم نسخ الترجمة!');
+
+  Future<void> _copyText(String text, String okLabel) async {
+    if (text.isEmpty) return;
     try {
-      await Clipboard.setData(ClipboardData(text: _result!.text));
+      await Clipboard.setData(ClipboardData(text: text));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم نسخ النص!')),
+          SnackBar(content: Text(okLabel)),
         );
       }
     } catch (e) {
@@ -143,6 +154,9 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
       ref.invalidate(currentSubscriptionProvider);
       setState(() {
         _result = result;
+        // The text changed — drop any stale translation of the old transcript.
+        _translation = result.translation;
+        _showTranslation = true;
         _upgrading = false;
       });
     } catch (e) {
@@ -151,6 +165,33 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(friendlyErrorMessage(e)),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
+  }
+
+  /// Translates the transcript into Arabic via the server (1 daily credit),
+  /// caches it on the local row, and shows it under the original text.
+  Future<void> _translate() async {
+    final t = _result;
+    if (t == null || _translating) return;
+    setState(() => _translating = true);
+    try {
+      final updated = await ref.read(transcriptionRepoProvider).translate(t);
+      if (!mounted) return;
+      setState(() {
+        _result = updated;
+        _translation = updated.translation;
+        _showTranslation = true;
+        _translating = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _translating = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e is TranslationException ? e.message : friendlyErrorMessage(e)),
           backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
@@ -188,10 +229,17 @@ class _ShareHandlerScreenState extends ConsumerState<ShareHandlerScreen> {
               error: _error,
               result: _result,
               upgrading: _upgrading,
+              translation: _translation,
+              translating: _translating,
+              showTranslation: _showTranslation,
               onClose: () => widget.onDone?.call(),
               onCopy: _copy,
+              onCopyTranslation: _copyTranslation,
               onUpgrade: _upgradeQuality,
               onOpenInApp: _openInApp,
+              onTranslate: _translate,
+              onToggleTranslation: () =>
+                  setState(() => _showTranslation = !_showTranslation),
             ),
           ),
         ),
@@ -205,20 +253,32 @@ class _SheetBody extends StatelessWidget {
   final String? error;
   final Transcription? result;
   final bool upgrading;
+  final String? translation;
+  final bool translating;
+  final bool showTranslation;
   final VoidCallback onClose;
   final VoidCallback onCopy;
+  final VoidCallback onCopyTranslation;
   final VoidCallback onUpgrade;
   final VoidCallback onOpenInApp;
+  final VoidCallback onTranslate;
+  final VoidCallback onToggleTranslation;
 
   const _SheetBody({
     required this.processing,
     required this.error,
     required this.result,
     required this.upgrading,
+    required this.translation,
+    required this.translating,
+    required this.showTranslation,
     required this.onClose,
     required this.onCopy,
+    required this.onCopyTranslation,
     required this.onUpgrade,
     required this.onOpenInApp,
+    required this.onTranslate,
+    required this.onToggleTranslation,
   });
 
   @override
@@ -323,6 +383,9 @@ class _SheetBody extends StatelessWidget {
 
   Widget _buildResult(BuildContext context, Transcription t) {
     final scheme = Theme.of(context).colorScheme;
+    // Arabic transcripts have nothing to translate to Arabic — hide the button.
+    final canTranslate = t.text.trim().isNotEmpty &&
+        !t.language.toLowerCase().startsWith('ar');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -361,15 +424,40 @@ class _SheetBody extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AppSpacing.md),
-        // 2) Copy (full width).
-        SizedBox(
-          height: 48,
-          child: ElevatedButton.icon(
-            onPressed: onCopy,
-            icon: const Icon(Icons.copy),
-            label: const Text('نسخ'),
-          ),
+        // 2) Copy + Translate (translate sits beside copy, hidden for Arabic).
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: onCopy,
+                  icon: const Icon(Icons.copy),
+                  label: const Text('نسخ'),
+                ),
+              ),
+            ),
+            if (canTranslate) ...[
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: SizedBox(height: 48, child: _translateButton(context)),
+              ),
+            ],
+          ],
         ),
+        if (canTranslate && translation == null && !translating) ...[
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'الترجمة إلى العربية تخصم 1 من رصيدك اليومي',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+          ),
+        ],
+        // Arabic translation card (cached after the first translate).
+        if (translation != null && showTranslation) ...[
+          const SizedBox(height: AppSpacing.sm),
+          _TranslationCard(text: translation!, onCopy: onCopyTranslation),
+        ],
         // "Higher quality" upgrade — only offered for a free on-device result.
         // A server result is already the high-quality path, so we hide it then.
         if (t.isClientSide) ...[
@@ -433,12 +521,98 @@ class _SheetBody extends StatelessWidget {
     );
   }
 
+  Widget _translateButton(BuildContext context) {
+    if (translating) {
+      return ElevatedButton.icon(
+        onPressed: null,
+        icon: const SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        label: const Text('يترجم…'),
+      );
+    }
+    final translated = translation != null;
+    return ElevatedButton.icon(
+      onPressed: translated ? onToggleTranslation : onTranslate,
+      icon: Icon(
+        translated
+            ? (showTranslation ? Icons.visibility_off : Icons.visibility)
+            : Icons.translate,
+        size: 18,
+      ),
+      label: Text(
+        translated ? (showTranslation ? 'إخفاء' : 'إظهار') : 'ترجمة',
+      ),
+    );
+  }
+
   String _formatDuration(double seconds) {
     if (seconds <= 0) return '—';
     if (seconds < 60) return '${seconds.toStringAsFixed(0)} ثانية';
     final m = seconds ~/ 60;
     final s = (seconds % 60).round();
     return '$m:${s.toString().padLeft(2, '0')} دقيقة';
+  }
+}
+
+class _TranslationCard extends StatelessWidget {
+  final String text;
+  final VoidCallback onCopy;
+  const _TranslationCard({required this.text, required this.onCopy});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: scheme.primary.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.translate, size: 16, color: scheme.primary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'الترجمة (العربية)',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: scheme.primary,
+                      ),
+                ),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: 'نسخ الترجمة',
+                icon: const Icon(Icons.copy, size: 18),
+                onPressed: onCopy,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 180),
+            child: SingleChildScrollView(
+              child: Directionality(
+                textDirection: TextDirection.rtl,
+                child: SelectableText(
+                  text,
+                  style: const TextStyle(fontSize: 16, height: 1.7),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
