@@ -40,31 +40,16 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<true/>
 	<key>UIFileSharingEnabled</key>
 	<true/>
-	<key>CFBundleDocumentTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>Audio</string>
-			<key>CFBundleTypeRole</key>
-			<string>Viewer</string>
-			<key>LSHandlerRank</key>
-			<string>Alternate</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>public.audio</string>
-				<string>public.mp3</string>
-				<string>com.apple.m4a-audio</string>
-				<string>public.aiff-audio</string>
-				<string>com.microsoft.waveform-audio</string>
-				<string>org.xiph.flac</string>
-				<string>org.xiph.ogg</string>
-			</array>
-		</dict>
-	</array>
+	<!-- Audio shares are handled IN-PLACE by the Share Extension (it floats over
+	     the host app without launching Bisawtak). We deliberately do NOT register
+	     CFBundleDocumentTypes for audio: doing so adds an "Open in/Copy to
+	     Bisawtak" action that LAUNCHES the full app (the document-open path),
+	     which is exactly the "it opens the app" behavior we want to avoid.
+	     Removing it leaves the floating Share Extension as the way to bring a
+	     voice note in. (The extension's "فتح في بصوتك" hand-off still opens the
+	     app on demand via the bisawtak:// URL scheme below.) -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
