@@ -198,7 +198,8 @@ class TranscriptionRepository {
       final resp = await _api.dio.post(
         '/transcriptions/translate',
         data: {
-          'text': t.text,
+          // Backend caps text at 50k chars (422 otherwise); clamp to match.
+          'text': t.text.length > 50000 ? t.text.substring(0, 50000) : t.text,
           if (t.language.isNotEmpty) 'source_lang': t.language,
         },
       );

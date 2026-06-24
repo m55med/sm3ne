@@ -87,6 +87,7 @@ class ShareViewController: UIViewController {
     sheet.onCopy = { [weak self] text in self?.copyToClipboard(text) }
     sheet.onOpenInApp = { [weak self] in self?.openInApp() }
     sheet.onUpgrade = { [weak self] in self?.upgradeToServer() }
+    sheet.onTranslate = { [weak self] in self?.translate() }
     view.addSubview(sheet)
     NSLayoutConstraint.activate([
       sheet.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -213,6 +214,7 @@ class ShareViewController: UIViewController {
           DispatchQueue.main.async {
             self.sheet.showResult(
               text: text,
+              lang: lang,
               langName: Self.langName(lang),
               wordCount: Self.wordCount(text),
               durationSeconds: Self.audioDuration(fileURL),
@@ -249,6 +251,7 @@ class ShareViewController: UIViewController {
         DispatchQueue.main.async {
           self.sheet.showResult(
             text: resp.text,
+            lang: resp.lang ?? "ar",
             langName: resp.langName ?? Self.langName(resp.lang ?? "ar"),
             wordCount: resp.wordCount ?? Self.wordCount(resp.text),
             durationSeconds: resp.duration ?? Self.audioDuration(fileURL),
@@ -318,6 +321,7 @@ class ShareViewController: UIViewController {
         DispatchQueue.main.async {
           self.sheet.showResult(
             text: resp.text,
+            lang: resp.lang ?? "ar",
             langName: resp.langName ?? Self.langName(resp.lang ?? "ar"),
             wordCount: resp.wordCount ?? Self.wordCount(resp.text),
             durationSeconds: resp.duration ?? Self.audioDuration(fileURL),
@@ -338,6 +342,48 @@ class ShareViewController: UIViewController {
   private func copyToClipboard(_ text: String) {
     UIPasteboard.general.string = text
     sheet.flashCopied()
+  }
+
+  /// User tapped "ترجمة" — send the transcript to the server translate endpoint
+  /// (1 daily credit, charged only on success) and show the Arabic in the sheet.
+  private func translate() {
+    let text = sheet.translationSourceText
+    let lang = sheet.translationSourceLang
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    guard let token = AppGroup.accessToken() else {
+      presentTranslateError("افتح تطبيق بصوتك وسجّل الدخول لاستخدام الترجمة.")
+      return
+    }
+    sheet.showTranslating()
+    ServerTranscriber.translate(
+      text: text,
+      sourceLang: lang,
+      baseUrl: AppGroup.apiBaseUrl(),
+      token: token
+    ) { [weak self] result in
+      guard let self = self else { return }
+      DispatchQueue.main.async {
+        switch result {
+        case .success(let arabic):
+          diag("translate", "✓ chars=\(arabic.count)")
+          self.sheet.showTranslation(arabic)
+        case .failure(let message):
+          diag("translate", "✗ \(message)")
+          self.sheet.showTranslateError()
+          self.presentTranslateError(message)
+        }
+      }
+    }
+  }
+
+  private func presentTranslateError(_ message: String) {
+    // Only present if we're on screen and not already presenting — guards
+    // against "presentation in progress" / presenting on a dismissing VC.
+    guard view.window != nil, presentedViewController == nil else { return }
+    let alert = UIAlertController(
+      title: "تعذّرت الترجمة", message: message, preferredStyle: .alert)
+    alert.addAction(UIAlertAction(title: "حسناً", style: .default))
+    present(alert, animated: true)
   }
 
   /// Hands the shared file + a deep link to the full app so the user gets the

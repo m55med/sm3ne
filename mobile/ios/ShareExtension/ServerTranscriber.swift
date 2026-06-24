@@ -96,6 +96,57 @@ enum ServerTranscriber {
     }.resume()
   }
 
+  /// Translates a transcript to Arabic via `/transcriptions/translate` (costs
+  /// the user 1 daily credit, charged server-side only on success). Returns the
+  /// Arabic text. Mirrors the Flutter `transcription_repository.translate`.
+  static func translate(
+    text: String,
+    sourceLang: String?,
+    baseUrl: String,
+    token: String,
+    completion: @escaping (Result<String, String>) -> Void
+  ) {
+    guard let url = URL(string: "\(baseUrl)/transcriptions/translate") else {
+      completion(.failure("عنوان الخادم غير صالح.")); return
+    }
+    var req = URLRequest(url: url, timeoutInterval: 120)
+    req.httpMethod = "POST"
+    req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    // Backend caps text at 50k chars (422 otherwise); clamp to match.
+    var payload: [String: Any] = ["text": String(text.prefix(50_000))]
+    if let sl = sourceLang, !sl.isEmpty { payload["source_lang"] = sl }
+    req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+    URLSession.shared.dataTask(with: req) { data, resp, error in
+      if let error = error {
+        completion(.failure("تعذّر الاتصال بالخادم: \(error.localizedDescription)"))
+        return
+      }
+      let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+      guard let data = data else {
+        completion(.failure("لم يرد الخادم بأي بيانات.")); return
+      }
+      if status == 401 {
+        completion(.failure("انتهت صلاحية جلستك. افتح التطبيق وسجّل الدخول.")); return
+      }
+      if status == 429 {
+        completion(.failure("لقد بلغت الحد اليومي. حاول لاحقاً أو افتح التطبيق.")); return
+      }
+      guard (200...299).contains(status) else {
+        completion(.failure("فشلت الترجمة (رمز \(status))."))
+        return
+      }
+      guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let translated = (json["translated_text"] as? String)?
+              .trimmingCharacters(in: .whitespacesAndNewlines),
+            !translated.isEmpty else {
+        completion(.failure("تعذّرت الترجمة. حاول مرة أخرى.")); return
+      }
+      completion(.success(translated))
+    }.resume()
+  }
+
   private static func mimeType(for ext: String) -> String {
     switch ext {
     case "mp3": return "audio/mpeg"

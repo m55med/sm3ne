@@ -10,14 +10,16 @@ import 'package:bisawtak/shared/utils/error_messages.dart';
 import 'package:bisawtak/shared/utils/file_validation.dart';
 import 'package:bisawtak/shared/utils/sandbox_paths.dart';
 
-/// Floating result sheet shown when a voice note is shared into the app.
+/// Floating result sheet shown when a voice note is shared into the app via the
+/// document-open path (the full app launches).
 ///
-/// On Android (and the iOS "فتح في بصوتك" hand-off) the app launches with a
-/// translucent theme so this renders as a quick bottom sheet floating over the
-/// previous app — the user gets the transcript without the full app chrome.
-/// It mirrors the native iOS Share Extension sheet: accuracy/duration + word
-/// count chips, the text, copy, and an action row with the language (right)
-/// and "فتح في بصوتك" (left), plus the server request id.
+/// It renders as a `Positioned.fill` overlay inside `MaterialApp.router`'s
+/// builder, so the sheet floats over the app's own home (dimmed by its 0.35
+/// scrim) instead of a solid-black screen. It does NOT float over the host app
+/// (WhatsApp) — that case is handled by the native iOS Share Extension. The
+/// sheet mirrors that native sheet: duration + word-count chips, the text,
+/// copy + translate, and an action row with the language (right) and
+/// "فتح في بصوتك" (left), plus the server request id.
 class ShareHandlerScreen extends ConsumerStatefulWidget {
   final String filePath;
   final String? sourceApp;

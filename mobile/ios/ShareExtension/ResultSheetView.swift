@@ -11,8 +11,11 @@ final class ResultSheetView: UIView {
   var onCopy: ((String) -> Void)?
   var onOpenInApp: (() -> Void)?
   var onUpgrade: (() -> Void)?
+  var onTranslate: (() -> Void)?
 
   private var currentText: String = ""
+  private var currentLang: String = ""
+  private var currentTranslation: String?
 
   // Brand tint roughly matching the app's primary.
   private let brand = UIColor(red: 0.20, green: 0.45, blue: 0.95, alpha: 1.0)
@@ -23,6 +26,12 @@ final class ResultSheetView: UIView {
   private let chipsRow = UIStackView()
   private let actionRow = UIStackView()
   private let copyButton = UIButton(type: .system)
+  private let translateButton = UIButton(type: .system)
+  private let translateHint = UILabel()
+  private let translationCard = UIView()
+  private let translationLabel = UILabel()
+  private let translationScroll = UIScrollView()
+  private let translationCopyButton = UIButton(type: .system)
   private let upgradeButton = UIButton(type: .system)
   private let upgradeNote = UILabel()
   private let openButton = UIButton(type: .system)
@@ -145,6 +154,30 @@ final class ResultSheetView: UIView {
     copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
     container.addArrangedSubview(copyButton)
 
+    // Translate-to-Arabic button (hidden when the transcript is already Arabic).
+    translateButton.setTitle("ترجمة إلى العربية", for: .normal)
+    translateButton.setImage(UIImage(systemName: "globe"), for: .normal)
+    translateButton.tintColor = brand
+    translateButton.setTitleColor(brand, for: .normal)
+    translateButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+    translateButton.backgroundColor = brand.withAlphaComponent(0.10)
+    translateButton.layer.cornerRadius = 12
+    translateButton.layer.borderWidth = 1
+    translateButton.layer.borderColor = brand.withAlphaComponent(0.35).cgColor
+    translateButton.heightAnchor.constraint(equalToConstant: 46).isActive = true
+    translateButton.addTarget(self, action: #selector(translateTapped), for: .touchUpInside)
+    container.addArrangedSubview(translateButton)
+
+    translateHint.text = "الترجمة إلى العربية تخصم 1 من رصيدك اليومي"
+    translateHint.font = .systemFont(ofSize: 11)
+    translateHint.textColor = .secondaryLabel
+    translateHint.textAlignment = .center
+    translateHint.numberOfLines = 0
+    container.addArrangedSubview(translateHint)
+
+    setupTranslationCard()
+    container.addArrangedSubview(translationCard)
+
     // "Higher quality" upgrade — only shown for a free on-device result. A
     // bordered secondary button + a small note that it re-runs via the server
     // and costs 2× the daily quota.
@@ -196,6 +229,110 @@ final class ResultSheetView: UIView {
     setResultHidden(true)
   }
 
+  private func setupTranslationCard() {
+    translationCard.backgroundColor = brand.withAlphaComponent(0.10)
+    translationCard.layer.cornerRadius = 12
+    translationCard.layer.borderWidth = 1
+    translationCard.layer.borderColor = brand.withAlphaComponent(0.25).cgColor
+    translationCard.isHidden = true
+
+    let inner = UIStackView()
+    inner.axis = .vertical
+    inner.spacing = 6
+    inner.translatesAutoresizingMaskIntoConstraints = false
+    inner.isLayoutMarginsRelativeArrangement = true
+    inner.directionalLayoutMargins = .init(top: 10, leading: 12, bottom: 10, trailing: 12)
+    translationCard.addSubview(inner)
+    NSLayoutConstraint.activate([
+      inner.leadingAnchor.constraint(equalTo: translationCard.leadingAnchor),
+      inner.trailingAnchor.constraint(equalTo: translationCard.trailingAnchor),
+      inner.topAnchor.constraint(equalTo: translationCard.topAnchor),
+      inner.bottomAnchor.constraint(equalTo: translationCard.bottomAnchor),
+    ])
+
+    // Header: globe + title + copy-translation.
+    let header = UIStackView()
+    header.axis = .horizontal
+    header.alignment = .center
+    header.spacing = 6
+    let iv = UIImageView(image: UIImage(systemName: "globe"))
+    iv.tintColor = brand
+    iv.contentMode = .scaleAspectFit
+    iv.widthAnchor.constraint(equalToConstant: 16).isActive = true
+    iv.heightAnchor.constraint(equalToConstant: 16).isActive = true
+    let title = UILabel()
+    title.text = "الترجمة (العربية)"
+    title.font = .systemFont(ofSize: 14, weight: .bold)
+    title.textColor = brand
+    translationCopyButton.setImage(UIImage(systemName: "doc.on.doc"), for: .normal)
+    translationCopyButton.tintColor = brand
+    translationCopyButton.addTarget(self, action: #selector(copyTranslationTapped), for: .touchUpInside)
+    header.addArrangedSubview(iv)
+    header.addArrangedSubview(title)
+    header.addArrangedSubview(UIView())   // spacer
+    header.addArrangedSubview(translationCopyButton)
+    inner.addArrangedSubview(header)
+
+    // Body: RTL Arabic text, scrollable.
+    translationLabel.font = .systemFont(ofSize: 16)
+    translationLabel.numberOfLines = 0
+    translationLabel.textAlignment = .right
+    translationScroll.translatesAutoresizingMaskIntoConstraints = false
+    translationScroll.addSubview(translationLabel)
+    translationLabel.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      translationLabel.leadingAnchor.constraint(equalTo: translationScroll.contentLayoutGuide.leadingAnchor),
+      translationLabel.trailingAnchor.constraint(equalTo: translationScroll.contentLayoutGuide.trailingAnchor),
+      translationLabel.topAnchor.constraint(equalTo: translationScroll.contentLayoutGuide.topAnchor),
+      translationLabel.bottomAnchor.constraint(equalTo: translationScroll.contentLayoutGuide.bottomAnchor),
+      translationLabel.widthAnchor.constraint(equalTo: translationScroll.frameLayoutGuide.widthAnchor),
+      translationScroll.heightAnchor.constraint(lessThanOrEqualToConstant: 180),
+    ])
+    inner.addArrangedSubview(translationScroll)
+  }
+
+  // MARK: - Translation
+
+  /// Resets translation chrome for a fresh result. The translate button is
+  /// hidden when the transcript is already Arabic (or empty).
+  private func resetTranslation(lang: String) {
+    currentLang = lang
+    currentTranslation = nil
+    let isArabic = lang.lowercased().hasPrefix("ar")
+    let hasText = !currentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let canTranslate = !isArabic && hasText
+    translateButton.isHidden = !canTranslate
+    translateButton.isEnabled = true
+    translateButton.setTitle("ترجمة إلى العربية", for: .normal)
+    translateHint.isHidden = !canTranslate
+    translationCard.isHidden = true
+    translationLabel.text = nil
+  }
+
+  func showTranslating() {
+    translateButton.isEnabled = false
+    translateButton.setTitle("جاري الترجمة…", for: .normal)
+  }
+
+  func showTranslation(_ text: String) {
+    currentTranslation = text
+    translationLabel.text = text
+    translationCard.isHidden = false
+    translateHint.isHidden = true
+    translateButton.isEnabled = true
+    translateButton.setTitle("إخفاء الترجمة", for: .normal)
+  }
+
+  func showTranslateError() {
+    translateButton.isEnabled = true
+    translateButton.setTitle("ترجمة إلى العربية", for: .normal)
+  }
+
+  /// The transcript text + detected language the controller sends to the
+  /// translate endpoint.
+  var translationSourceText: String { currentText }
+  var translationSourceLang: String { currentLang }
+
   // MARK: - States
 
   func showLoading(message: String = "جاري تحويل الصوت...") {
@@ -207,6 +344,7 @@ final class ResultSheetView: UIView {
 
   func showResult(
     text: String,
+    lang: String,
     langName: String,
     wordCount: Int,
     durationSeconds: Double,
@@ -220,6 +358,8 @@ final class ResultSheetView: UIView {
 
     textLabel.text = text
     langLabel.text = langName
+    // Translate button visibility depends on the detected language.
+    resetTranslation(lang: lang)
 
     // Chips: duration + word count.
     chipsRow.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -283,6 +423,13 @@ final class ResultSheetView: UIView {
     upgradeNote.isHidden = hidden
     actionRow.isHidden = hidden
     requestIdLabel.isHidden = hidden
+    // Translation chrome is otherwise driven by resetTranslation/showTranslation
+    // (called from showResult); ensure it's hidden whenever there's no result.
+    if hidden {
+      translateButton.isHidden = true
+      translateHint.isHidden = true
+      translationCard.isHidden = true
+    }
   }
 
   private func makeChip(icon: String, text: String, tint: UIColor = .secondaryLabel) -> UIView {
@@ -323,5 +470,20 @@ final class ResultSheetView: UIView {
     // Guard against double-taps while the server pass is in flight.
     upgradeButton.isEnabled = false
     onUpgrade?()
+  }
+
+  @objc private func translateTapped() {
+    if currentTranslation != nil {
+      // Already translated — just toggle the card's visibility.
+      let willHide = !translationCard.isHidden
+      translationCard.isHidden = willHide
+      translateButton.setTitle(willHide ? "إظهار الترجمة" : "إخفاء الترجمة", for: .normal)
+    } else {
+      onTranslate?()
+    }
+  }
+
+  @objc private func copyTranslationTapped() {
+    if let t = currentTranslation { onCopy?(t) }
   }
 }

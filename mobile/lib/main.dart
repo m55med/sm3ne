@@ -49,10 +49,10 @@ class SharedFileNotifier extends Notifier<String?> {
 final sharedFileProvider =
     NotifierProvider<SharedFileNotifier, String?>(SharedFileNotifier.new);
 
-/// Set when the user taps "فتح في بصوتك" on the share sheet. The share overlay
-/// lives in a plain MaterialApp (no GoRouter), so it can't navigate directly.
-/// Instead it stashes the target route here and dismisses; the root widget
-/// then drives the MaterialApp.router to that route once it rebuilds.
+/// Set when the user taps "فتح في بصوتك" on the share sheet. The sheet is an
+/// overlay in the router app's `builder` and doesn't hold a router ref, so it
+/// stashes the target route here and dismisses; the root widget then drives the
+/// MaterialApp.router to that route once it rebuilds.
 final pendingShareRouteProvider = StateProvider<String?>((ref) => null);
 
 void main() async {
@@ -199,35 +199,6 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
     final router = ref.watch(routerProvider);
     final sharedFile = ref.watch(sharedFileProvider);
 
-    // If a file was shared, show the share handler overlay
-    if (sharedFile != null) {
-      return MaterialApp(
-        title: 'بصوتك',
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.light(),
-        darkTheme: AppTheme.dark(),
-        themeMode: themeMode,
-        locale: locale,
-        supportedLocales: AppLocalizations.supportedLocales,
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        home: ShareHandlerScreen(
-          // The Key ensures Flutter unmounts the previous instance and
-          // creates a fresh one whenever a NEW shared file arrives — i.e.
-          // when the user shares another WhatsApp voice while the previous
-          // result is still on screen. Without this, the old transcription
-          // would stay visible because initState only runs on the first
-          // mount.
-          key: ValueKey(sharedFile),
-          filePath: sharedFile,
-          onDone: () => ref.read(sharedFileProvider.notifier).dismiss(),
-          onOpenRoute: (route) {
-            ref.read(pendingShareRouteProvider.notifier).state = route;
-            ref.read(sharedFileProvider.notifier).dismiss();
-          },
-        ),
-      );
-    }
-
     // Drain a pending "فتح في بصوتك" navigation once the router app is back.
     final pendingRoute = ref.watch(pendingShareRouteProvider);
     if (pendingRoute != null) {
@@ -249,6 +220,32 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
       supportedLocales: AppLocalizations.supportedLocales,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       routerConfig: router,
+      // The shared-result sheet floats OVER the running app — the home screen
+      // dims behind it via the sheet's own translucent scrim — instead of
+      // replacing the whole app with a black screen. (iOS still can't show
+      // ANOTHER app behind a foreground app; the native Share Extension covers
+      // the float-over-host-app case.)
+      builder: (context, child) {
+        return Stack(
+          children: [
+            ?child,
+            if (sharedFile != null)
+              Positioned.fill(
+                child: ShareHandlerScreen(
+                  // Fresh instance whenever a NEW file arrives so a second
+                  // forward re-runs initState instead of showing the stale one.
+                  key: ValueKey(sharedFile),
+                  filePath: sharedFile,
+                  onDone: () => ref.read(sharedFileProvider.notifier).dismiss(),
+                  onOpenRoute: (route) {
+                    ref.read(pendingShareRouteProvider.notifier).state = route;
+                    ref.read(sharedFileProvider.notifier).dismiss();
+                  },
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
