@@ -46,6 +46,24 @@ SPEECHMATICS_BASE_URL = os.getenv(
 ).strip().rstrip("/")
 SPEECHMATICS_LANGUAGE = os.getenv("SPEECHMATICS_LANGUAGE", "auto").strip()
 SPEECHMATICS_OPERATING_POINT = os.getenv("SPEECHMATICS_OPERATING_POINT", "enhanced").strip()
+# Candidate set for automatic language identification (only used in "auto"
+# mode). Speechmatics restricts detection to these languages — this is what
+# stops Arabic from being mis-identified as Persian/Urdu (acoustically + same
+# script). Keep it broad enough to cover real users but EXCLUDE the
+# Arabic-script confusables (fa/ur/ps). Comma-separated ISO codes; empty = let
+# Speechmatics consider every supported language (the old, mis-detecting behaviour).
+SPEECHMATICS_EXPECTED_LANGUAGES = [
+    c.strip().lower()
+    for c in os.getenv(
+        # Verified accepted by Speechmatics language-id (zh/fa/ur/ps deliberately
+        # excluded: zh isn't LID-supported; fa/ur/ps are the Arabic-script
+        # look-alikes that cause the mis-detection).
+        "SPEECHMATICS_EXPECTED_LANGUAGES",
+        "ar,en,fr,es,de,it,pt,ru,tr,nl,pl,uk,ro,sv,cs,el,he,hi,id,ja,ko,"
+        "da,fi,no,hu,bg,hr,sk,ca,ms,th,vi",
+    ).split(",")
+    if c.strip()
+]
 SPEECHMATICS_POLL_INTERVAL = float(os.getenv("SPEECHMATICS_POLL_INTERVAL", "2.0"))
 SPEECHMATICS_TIMEOUT_SECONDS = int(os.getenv("SPEECHMATICS_TIMEOUT_SECONDS", "600"))
 

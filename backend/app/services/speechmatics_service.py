@@ -14,6 +14,7 @@ import httpx
 from app.core.config import (
     SPEECHMATICS_API_KEY,
     SPEECHMATICS_BASE_URL,
+    SPEECHMATICS_EXPECTED_LANGUAGES,
     SPEECHMATICS_LANGUAGE,
     SPEECHMATICS_OPERATING_POINT,
     SPEECHMATICS_POLL_INTERVAL,
@@ -91,10 +92,13 @@ def _job_config(language: str | None, model: str | None) -> dict:
         # Auto language ID: by default the job is REJECTED when no language is
         # identified with high confidence. "allow" makes it transcribe in the
         # best-guess language instead so a short/non-Arabic clip still returns a
-        # result in the detected language rather than failing or forcing Arabic.
-        # We intentionally do NOT constrain `expected_languages` — any supported
-        # language (English, French, ...) should be detectable.
-        config["language_identification_config"] = {"low_confidence_action": "allow"}
+        # result in the detected language rather than failing.
+        lid_config: dict = {"low_confidence_action": "allow"}
+        # Constrain the candidate set so Arabic isn't mis-identified as Persian/
+        # Urdu (same script, acoustically close). Excludes fa/ur/ps by default.
+        if SPEECHMATICS_EXPECTED_LANGUAGES:
+            lid_config["expected_languages"] = SPEECHMATICS_EXPECTED_LANGUAGES
+        config["language_identification_config"] = lid_config
     return config
 
 

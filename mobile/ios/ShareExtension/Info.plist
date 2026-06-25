@@ -29,19 +29,26 @@
 	<dict>
 		<key>NSExtensionAttributes</key>
 		<dict>
-			<!-- Broaden activation so the extension appears for audio attachments,
-			     file attachments, and movie attachments (Messenger/iOS sometimes
-			     wrap voice in mp4). ShareViewController.swift filters by UTI and
-			     by file extension before processing. -->
+			<!-- Use an explicit NSPredicate rule (not the dict form). The dict
+			     form's "File"/"Movie" keys do NOT reliably match a shared voice
+			     note (and "...SupportsAttachmentsWithMaxCount" is not a real key,
+			     so iOS ignored it) — which is why the extension never appeared in
+			     the share sheet. This predicate matches a single attachment that
+			     conforms to audio, movie (Messenger/iOS sometimes wrap voice in
+			     mp4), or generic data (some apps export the note as a plain file).
+			     ShareViewController.swift still filters by UTI + extension. -->
 			<key>NSExtensionActivationRule</key>
-			<dict>
-				<key>NSExtensionActivationSupportsAttachmentsWithMaxCount</key>
-				<integer>1</integer>
-				<key>NSExtensionActivationSupportsFileWithMaxCount</key>
-				<integer>1</integer>
-				<key>NSExtensionActivationSupportsMovieWithMaxCount</key>
-				<integer>1</integer>
-			</dict>
+			<string>SUBQUERY (
+				extensionItems,
+				$extensionItem,
+				SUBQUERY (
+					$extensionItem.attachments,
+					$attachment,
+					ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audio"
+					|| ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.movie"
+					|| ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.data"
+				).@count &gt;= 1
+			).@count == 1</string>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.share-services</string>
