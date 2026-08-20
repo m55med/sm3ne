@@ -4,6 +4,25 @@ import Foundation
 /// Posts the shared file to `/transcribe` with the user's bearer token (read
 /// from the App Group) and parses the JSON the backend returns. Mirrors the
 /// fields the Flutter `Transcription.fromApiResponse` reads.
+/// User-facing failure carried by this file's `Result`s.
+///
+/// `Result`'s failure type must conform to `Error`, and `String` does not — the
+/// original code used `Result<_, String>`, which is why this whole target never
+/// compiled (and therefore never shipped: the built app had no PlugIns folder).
+/// Conforming to `ExpressibleByStringInterpolation` keeps every existing
+/// `completion(.failure("رسالة"))` call site working verbatim.
+struct TranscribeError: Error, ExpressibleByStringInterpolation, CustomStringConvertible {
+  let message: String
+
+  init(_ message: String) { self.message = message }
+  init(stringLiteral value: String) { self.message = value }
+  init(stringInterpolation: DefaultStringInterpolation) {
+    self.message = String(stringInterpolation: stringInterpolation)
+  }
+
+  var description: String { message }
+}
+
 enum ServerTranscriber {
 
   struct Response {
@@ -20,7 +39,7 @@ enum ServerTranscriber {
     baseUrl: String,
     token: String,
     highQuality: Bool = false,
-    completion: @escaping (Result<Response, String>) -> Void
+    completion: @escaping (Result<Response, TranscribeError>) -> Void
   ) {
     guard let url = URL(string: "\(baseUrl)/transcribe") else {
       completion(.failure("عنوان الخادم غير صالح.")); return
@@ -104,7 +123,7 @@ enum ServerTranscriber {
     sourceLang: String?,
     baseUrl: String,
     token: String,
-    completion: @escaping (Result<String, String>) -> Void
+    completion: @escaping (Result<String, TranscribeError>) -> Void
   ) {
     guard let url = URL(string: "\(baseUrl)/transcriptions/translate") else {
       completion(.failure("عنوان الخادم غير صالح.")); return

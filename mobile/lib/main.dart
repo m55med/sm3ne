@@ -11,7 +11,9 @@ import 'package:bisawtak/config/l10n/app_localizations.dart';
 import 'package:bisawtak/config/theme.dart';
 import 'package:bisawtak/config/routes.dart';
 import 'package:bisawtak/core/analytics/analytics_service.dart';
+import 'package:bisawtak/core/auth/auth_provider.dart';
 import 'package:bisawtak/features/share_receiver/share_handler_screen.dart';
+import 'package:bisawtak/share_sheet_main.dart' show runShareSheet;
 import 'package:bisawtak/shared/utils/remote_logger.dart';
 import 'package:bisawtak/shared/utils/sandbox_paths.dart';
 
@@ -53,7 +55,34 @@ final sharedFileProvider =
 /// overlay in the router app's `builder` and doesn't hold a router ref, so it
 /// stashes the target route here and dismisses; the root widget then drives the
 /// MaterialApp.router to that route once it rebuilds.
+///
+/// Two producers now write to it, and they are drained by DIFFERENT widgets:
+///  - the in-app overlay (iOS / "Open with") — app already past the splash, so
+///    [_BisawtakAppState.build] drains it immediately;
+///  - the Android [ShareSheetActivity], which launches this app with a route
+///    extra. That arrives while the splash is still resolving auth, and any
+///    navigation from here would be overwritten by the splash's own auth
+///    listener — so `SplashScreen` drains it instead once auth settles.
+/// The `authenticated` check in the builder is what keeps the two apart.
 final pendingShareRouteProvider = StateProvider<String?>((ref) => null);
+
+/// Channel to the Android host activity, used to collect a route handed over by
+/// the floating share sheet. iOS has no counterpart — its Share Extension does
+/// not deep-link back into the app.
+const _appRouteChannel = MethodChannel('com.bisawtak/app_route');
+
+/// Entrypoint for `ShareSheetActivity`'s engine — the floating share sheet.
+///
+/// It lives HERE, in the default library, on purpose. Flutter's AOT build walks
+/// the import graph out of lib/main.dart; a library nothing imports is never
+/// compiled, so an entrypoint declared in share_sheet_main.dart was absent from
+/// the release binary and the engine died with "Could not resolve main
+/// entrypoint function" — leaving an invisible window over the sending app.
+/// Declaring it here also pulls share_sheet_main.dart into the build.
+@pragma('vm:entry-point')
+void shareSheetMain() {
+  runShareSheet();
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -108,6 +137,35 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
   void initState() {
     super.initState();
     _handleIncomingShares();
+    _handleShareSheetRoute();
+  }
+
+  /// Collects the route the Android floating share sheet asked us to open.
+  ///
+  /// Cold start (app was not running): the launching intent carried the extra
+  /// before Dart existed, so we PULL it. Warm start: the host activity PUSHes
+  /// it through `onNewIntent`. Both land in [pendingShareRouteProvider].
+  void _handleShareSheetRoute() {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+
+    _appRouteChannel.setMethodCallHandler((call) async {
+      if (call.method == 'route') {
+        final route = call.arguments as String?;
+        RemoteLogger.log('share', 'route pushed from sheet: ${route ?? "nil"}');
+        if (route != null && route.isNotEmpty && mounted) {
+          ref.read(pendingShareRouteProvider.notifier).state = route;
+        }
+      }
+    });
+
+    _appRouteChannel.invokeMethod<String>('getPendingRoute').then((route) {
+      RemoteLogger.log('share', 'route pulled from sheet: ${route ?? "nil"}');
+      if (route != null && route.isNotEmpty && mounted) {
+        ref.read(pendingShareRouteProvider.notifier).state = route;
+      }
+    }).catchError((Object e) {
+      RemoteLogger.log('share', 'getPendingRoute failed: $e');
+    });
   }
 
   void _handleIncomingShares() {
@@ -200,8 +258,16 @@ class _BisawtakAppState extends ConsumerState<BisawtakApp> {
     final sharedFile = ref.watch(sharedFileProvider);
 
     // Drain a pending "فتح في بصوتك" navigation once the router app is back.
+    //
+    // Only while the session is already settled: a route arriving during a cold
+    // start (Android share sheet → launch app) would be pushed here and then
+    // immediately overwritten by SplashScreen's auth listener sending the user
+    // to /home. In that window we leave the route staged and let the splash
+    // deliver it. `read` — not `watch` — so an auth change alone never triggers
+    // this drain; it runs only when a route is actually staged.
     final pendingRoute = ref.watch(pendingShareRouteProvider);
-    if (pendingRoute != null) {
+    final settled = ref.read(authProvider).status == AuthStatus.authenticated;
+    if (pendingRoute != null && settled) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (ref.read(pendingShareRouteProvider) == pendingRoute) {
           ref.read(pendingShareRouteProvider.notifier).state = null;

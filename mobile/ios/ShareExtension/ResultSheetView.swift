@@ -130,6 +130,15 @@ final class ResultSheetView: UIView {
       textLabel.widthAnchor.constraint(equalTo: bodyScroll.frameLayoutGuide.widthAnchor),
       bodyScroll.heightAnchor.constraint(lessThanOrEqualToConstant: 220),
     ])
+    // Give the scroll view an actual height. Pinning the label to
+    // contentLayoutGuide sizes the CONTENT, not the scroll view's own frame —
+    // a UIScrollView has no intrinsic content size, so inside this vertical
+    // stack the only other rule was the `<= 220` cap and Auto Layout collapsed
+    // it to zero: the transcript rendered as an empty sliver. Matching the
+    // label's height below required priority lets the cap win on long text.
+    let bodyHeight = bodyScroll.heightAnchor.constraint(equalTo: textLabel.heightAnchor)
+    bodyHeight.priority = .defaultHigh
+    bodyHeight.isActive = true
     let bodyCard = UIView()
     bodyCard.backgroundColor = .tertiarySystemBackground
     bodyCard.layer.cornerRadius = 12
@@ -288,6 +297,12 @@ final class ResultSheetView: UIView {
       translationLabel.widthAnchor.constraint(equalTo: translationScroll.frameLayoutGuide.widthAnchor),
       translationScroll.heightAnchor.constraint(lessThanOrEqualToConstant: 180),
     ])
+    // Same collapse-to-zero trap as the transcript scroll view above — see the
+    // comment there. Without this the translation card would render empty too.
+    let translationHeight =
+      translationScroll.heightAnchor.constraint(equalTo: translationLabel.heightAnchor)
+    translationHeight.priority = .defaultHigh
+    translationHeight.isActive = true
     inner.addArrangedSubview(translationScroll)
   }
 

@@ -15,4 +15,20 @@
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
+    <!-- Window for ShareSheetActivity. Fully transparent so the result sheet
+         floats OVER the app the voice note was forwarded from (WhatsApp,
+         Telegram…) instead of launching Bisawtak full-screen.
+
+         Not duplicated in values-night: the window paints nothing at all, so
+         there is no light/dark variant to pick. The dimming behind the sheet
+         is drawn by Flutter itself (ShareHandlerScreen's 0.35 scrim), which is
+         why backgroundDimEnabled is off here — two scrims would double-darken
+         the host app. -->
+    <style name="ShareSheetTheme" parent="@android:style/Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@android:style/Animation.Dialog</item>
+    </style>
 </resources>

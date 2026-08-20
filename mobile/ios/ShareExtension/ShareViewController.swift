@@ -258,11 +258,11 @@ class ShareViewController: UIViewController {
             requestId: resp.requestId,
             onDevice: false)
         }
-      case .failure(let message):
-        diag("server", "✗ \(message)")
+      case .failure(let error):
+        diag("server", "✗ \(error)")
         DispatchQueue.main.async {
           self.sheet.showResultUnavailable(
-            message: message, canOpenApp: true)
+            message: error.message, canOpenApp: true)
         }
       }
     }
@@ -328,10 +328,10 @@ class ShareViewController: UIViewController {
             requestId: resp.requestId,
             onDevice: false)
         }
-      case .failure(let message):
-        diag("upgrade", "✗ \(message)")
+      case .failure(let error):
+        diag("upgrade", "✗ \(error)")
         DispatchQueue.main.async {
-          self.sheet.showResultUnavailable(message: message, canOpenApp: true)
+          self.sheet.showResultUnavailable(message: error.message, canOpenApp: true)
         }
       }
     }
@@ -367,10 +367,10 @@ class ShareViewController: UIViewController {
         case .success(let arabic):
           diag("translate", "✓ chars=\(arabic.count)")
           self.sheet.showTranslation(arabic)
-        case .failure(let message):
-          diag("translate", "✗ \(message)")
+        case .failure(let error):
+          diag("translate", "✗ \(error)")
           self.sheet.showTranslateError()
-          self.presentTranslateError(message)
+          self.presentTranslateError(error.message)
         }
       }
     }

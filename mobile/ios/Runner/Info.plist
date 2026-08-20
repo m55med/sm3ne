@@ -40,37 +40,25 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<true/>
 	<key>UIFileSharingEnabled</key>
 	<true/>
-	<!-- Audio document handler. This is the FALLBACK path: it makes Bisawtak
-	     appear as "Copy to/Open in Bisawtak" in the share sheet, which LAUNCHES
-	     the app (document-open → the Flutter floating sheet). The PREFERRED path
-	     is the Share Extension (floats over the host app without launching) — but
-	     not every host app surfaces an extension reliably, so we keep this so the
-	     app always appears as a share target. -->
-	<key>CFBundleDocumentTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>Audio</string>
-			<key>CFBundleTypeRole</key>
-			<string>Viewer</string>
-			<key>LSHandlerRank</key>
-			<string>Alternate</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>public.audio</string>
-				<string>public.mp3</string>
-				<string>com.apple.m4a-audio</string>
-				<string>public.aiff-audio</string>
-				<string>com.microsoft.waveform-audio</string>
-				<string>org.xiph.flac</string>
-				<string>org.xiph.ogg</string>
-			</array>
-		</dict>
-	</array>
+	<!-- NO CFBundleDocumentTypes / LSSupportsOpeningDocumentsInPlace here, on
+	     purpose. Declaring them makes iOS offer "Copy to/Open in Bisawtak" in the
+	     share sheet, which LAUNCHES the full app on top of WhatsApp — the exact
+	     behaviour the Share Extension exists to avoid. With both declared the app
+	     showed up TWICE in the share sheet, one entry floating and one launching,
+	     and users hit the launching one.
+
+	     History, so this isn't restored a third time: build 45 removed them and
+	     Bisawtak vanished from the share sheet entirely — but only because the
+	     extension's activation rule was broken at the time (invalid key). Build 46
+	     fixed that rule AND restored these as a safety net. The rule works now
+	     (ShareExtension/Info.plist matches public.audio/movie/data), so the net is
+	     no longer needed and was actively harmful.
+
+	     Trade-off accepted: Bisawtak no longer appears under "Open with" for audio
+	     files in the Files app. Forwarding from a chat app — the actual use case —
+	     goes through the extension. Re-add this block to undo. -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
